@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import TelemetryPanel from './TelemetryPanel'
+import VoiceCommandButton from './VoiceCommandButton'
 
 const STORAGE_KEY = 'pc-power-remote.pin'
 const DEFAULT_PIN = '134113'
@@ -396,6 +397,61 @@ export default function App() {
     setPinOpen(true)
   }
 
+  const executeVoiceCommand = (text) => {
+    const normalized = text.trim().toLowerCase()
+    setBusy('voice')
+    setToast({
+      tone: 'info',
+      title: 'Orden de voz detectada',
+      message: `Comando: "${normalized}"`,
+    })
+    // Pequeño delay para que el usuario vea el toast antes de la accion
+    setTimeout(() => {
+      if (normalized === 'apagar') {
+        scheduleShutdown(5)
+      } else if (normalized === 'estado') {
+        fetch('/api/state', { headers: { 'X-App-Pin': pin } })
+          .then((r) => r.json())
+          .then((data) => setPending(data.pending ? data : null))
+      } else if (normalized === 'suspender') {
+        fetch('/api/system/suspend', {
+          method: 'POST',
+          headers: { 'X-App-Pin': pin },
+        })
+          .then((r) => r.json())
+          .then((data) => setToast({ tone: 'success', title: 'Suspensión', message: data.message }))
+      } else if (normalized === 'reiniciar') {
+        // No hay endpoint de reinicio aún, mostramos feedback
+        setToast({ tone: 'info', title: 'Reinicio', message: 'Endopint de reinicio no disponible aún' })
+      } else if (normalized === 'despertar') {
+        fetch('/api/wake', {
+          method: 'POST',
+          headers: { 'X-App-Pin': pin },
+        })
+          .then((r) => r.json())
+          .then((data) =>
+            setToast({
+              tone: 'success',
+              title: 'WOL',
+              message: `WOL a ${data.mac} via ${data.broadcast}:${data.port}.`,
+            })
+          )
+      } else if (normalized === 'cancelar') {
+        fetch('/api/cancel', {
+          method: 'POST',
+          headers: { 'X-App-Pin': pin },
+        })
+          .then(() => setToast({ tone: 'success', title: 'Cancelado', message: 'Apagado cancelado' }))
+          .then(() => fetch('/api/state', { headers: { 'X-App-Pin': pin } }))
+          .then((r) => r.json())
+          .then((data) => setPending(data.pending ? data : null))
+      } else {
+        setToast({ tone: 'error', title: 'Comando no reconocido', message: `No reconozco el comando: "${normalized}"` })
+      }
+      setBusy(null)
+    }, 800)
+  }
+
   const handleError = (err, title) => {
     if (err.status === 401) {
       requireNewPin('El PIN configurado no es valido para este equipo.')
@@ -675,6 +731,8 @@ export default function App() {
           pin={pin}
           onAuthError={(message) => requireNewPin(message)}
         />
+
+        <VoiceCommandButton onCommand={executeVoiceCommand} />
 
         <section className="relative border border-edge bg-panel/80 p-5">
           {pending ? (
