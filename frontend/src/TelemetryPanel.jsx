@@ -209,7 +209,11 @@ export default function TelemetryPanel({ pin, onAuthError }) {
       <div className="mt-5 flex items-center justify-between gap-3 border-t border-edge pt-3 text-[10px] uppercase tracking-[0.2em] text-zinc-600">
         <span>uptime: {formatUptime(telemetry?.uptime_seconds)}</span>
         <span className="truncate">
-          {telemetry ? 'socket ws/telemetry · activo' : 'sin muestras'}
+          {live
+            ? 'socket ws/telemetry · activo'
+            : status === 'reconnecting'
+              ? 'reintentando conexion'
+              : 'sin muestras'}
         </span>
       </div>
     </section>

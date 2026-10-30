@@ -317,10 +317,12 @@ app = FastAPI(
 # En produccion, restringir allow_origins a los origenes reales.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Permite cualquier origen en desarrollo; en prod restringir a dominios reales
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Permite que cabeceras de proxy inverso pasen seguras:
+    expose_headers=["*"],
 )
 
 
