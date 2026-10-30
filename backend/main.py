@@ -427,11 +427,125 @@ class Telemetry(BaseModel):
     uptime_seconds: int
 
 
+class SuspendRequest(BaseModel):
+    minutes: int | None = Field(
+        default=None,
+        ge=1,
+        le=60,
+        description="Minutos para esperar antes de suspender (máx. 60). Si omite, suspende inmediatamente.",
+        examples=[5],
+    )
+
+
+class GuardianState(BaseModel):
+    enabled: bool = False
+    cpu_threshold_percent: float = Field(default=5.0, ge=1.0, le=50.0)
+    inactivity_minutes: int = Field(default=30, ge=1, le=480)
+    last_check: str | None = None
+    suspended: bool = False
+
+
 TELEMETRY_INTERVAL = 1.5  # segundos entre muestras
 CPU_SAMPLE_SECONDS = 0.1  # ventana de medicion de CPU (en el hilo de trabajo)
+GUARDIAN_CONSECUTIVE_LOW = 3  # muestreos consecutivos por debajo del umbral
+GUARDIAN_CPU_SAMPLE_INTERVAL = 10  # segundos entre muestreos de decisi\u00f3n
+GUARDIAN_DEFAULT_THRESHOLD = 5.0  # %
+GUARDIAN_DEFAULT_INACTIVITY = 30  # minutos
 
 
-def collect_telemetry() -> Telemetry:
+_guardian = GuardianState()
+_guardian_lock = threading.Lock()
+_guardian_thread: threading.Thread | None = None
+_guardian_stop_event = threading.Event()
+
+
+def _guardian_monitor() -> None:
+    # Monitor de CPU para suspension automática
+    global _guardian
+    cpu_threshold = _guardian.cpu_threshold_percent
+    inactivity_minutes = _guardian.inactivity_minutes
+    enabled = _guardian.enabled
+    if not enabled:
+        with _guardian_lock:
+            _guardian.last_check = datetime.utcnow().isoformat()
+        return
+    consecutive_low = 0
+    total_low_seconds = 0
+    sample_interval = 3
+    while not _guardian_stop_event.is_set():
+        try:
+            cpu_pct = psutil.cpu_percent(interval=CPU_SAMPLE_SECONDS)
+            total_low_seconds += sample_interval
+            consecutive_low += 1
+            if cpu_pct < cpu_threshold:
+                if consecutive_low >= GUARDIAN_CONSECUTIVE_LOW and total_low_seconds >= (inactivity_minutes * 60):
+                    _attempt_suspend()
+                    consecutive_low = 0
+                    total_low_seconds = 0
+            else:
+                consecutive_low = 0
+                total_low_seconds = 0
+            with _guardian_lock:
+                _guardian.last_check = datetime.utcnow().isoformat()
+                _guardian.suspended = total_low_seconds >= (inactivity_minutes * 60) and consecutive_low >= GUARDIAN_CONSECUTIVE_LOW
+            _guardian_stop_event.wait(timeout=GUARDIAN_CPU_SAMPLE_INTERVAL)
+        except RuntimeError:
+            break
+        except Exception as exc:
+            logger.error(\"Error en monitor guardian: %s\", exc)
+            _guardian_stop_event.wait(timeout=5.0)
+
+GUARDIAN_CONSECUTIVE_LOW = 3
+GUARDIAN_CPU_SAMPLE_INTERVAL = 10
+
+def _attempt_suspend() -> None:
+    if DRY_RUN:
+        logger.info(\"Suspensión programada (Dry Run)\")
+        with _guardian_lock:
+            _guardian.suspended = True
+        return
+    cmd = [\"rundll32.exe\", \"powrprof.dll,SetSuspendState\", \"0,1,0\"]
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=5, check=False)
+        logger.info(\"Suspensión ejecutada\")
+    except FileNotFoundError:
+        logger.error(\"No se encontro rundll32.exe\")
+    except OSError as exc:
+        logger.error(\"Error al ejecutar suspensión: %s\", exc)
+    with _guardian_lock:
+        _guardian.suspended = True
+
+def _reset_guardian() -> None:
+    global _guardian
+    with _guardian_lock:
+        _guardian.enabled = False
+        _guardian.suspended = False
+        _guardian.cpu_threshold_percent = GUARDIAN_DEFAULT_THRESHOLD
+        _guardian.inactivity_minutes = GUARDIAN_DEFAULT_INACTIVITY
+        _guardian.last_check = None
+
+def _start_guardian_thread() -> None:
+    global _guardian_thread, _guardian_stop_event
+    if _guardian_thread and _guardian_thread.is_alive():
+        _guardian_stop_event.set()
+        _guardian_thread.join(timeout=5.0)
+    _guardian_stop_event = threading.Event()
+    with _guardian_lock:
+        _guardian.enabled = False
+        _guardian.suspended = False
+    _guardian_thread = threading.Thread(target=_guardian_monitor, daemon=True)
+    _guardian_thread.start()
+    logger.info(\"Hilo de guardian de energía iniciado\")
+
+def _stop_guardian_thread() -> None:
+    global _guardian_thread
+    if _guardian_thread and _guardian_thread.is_alive():
+        _guardian_stop_event.set()
+        _guardian_thread.join(timeout=10.0)
+        _guardian_thread = None
+        logger.info(\"Hilo de guardian detenido\")
+
+def collect_telemetry() -> Telemetry:'''
     """Muestra puntual del sistema (se ejecuta en un hilo aparte).
 
     cpu_percent usa interval=0.1 para que la primera muestra sea real: psutil
@@ -663,6 +777,37 @@ def wake(payload: WakeRequest | None = None) -> WakeSent:
 
     logger.info("Wake-on-LAN enviado a %s via %s:%s", mac, WOL_BROADCAST, WOL_PORT)
     return WakeSent(mac=mac, broadcast=WOL_BROADCAST, port=WOL_PORT)
+
+
+@app.post(
+    "/api/system/suspend",
+    dependencies=[Depends(require_pin)],
+    response_model=None,
+    summary="Suspende el equipo si se cumplen las condiciones de inactividad",
+)
+def system_suspend(payload: SuspendRequest | None = None) -> dict[str, str]:
+    """Suspende el equipo usando rundll32.exe powrprof.dll,SetSuspendState 0,1,0.
+
+    Si payload.minutes se especifica, espera ese número de minutos antes de suspender.
+    Si no se especifica, suspende inmediatamente.
+    Respeta la variable de entorno APP_DRY_RUN.
+    """
+    minutes = payload.minutes if payload else 0
+    seconds = minutes * 60
+
+    cmd = ["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"]
+
+    if DRY_RUN:
+        logger.info("Suspensión programada (Dry Run): %d minutos", minutes)
+        return {"status": "dry_run", "message": "Suspensión simulada"}
+
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=5, check=False)
+        logger.info("Suspensión ejecutada")
+        return {"status": "executed", "message": "Equipo en suspensión"}
+    except Exception as exc:
+        logger.error("Error al suspender: %s", exc)
+        return {"status": "error", "message": str(exc)}
 
 
 # --- Telemetria en tiempo real (WebSocket) -----------------------------------
