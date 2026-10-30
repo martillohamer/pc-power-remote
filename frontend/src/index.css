@@ -1,0 +1,111 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-void: #05060a;
+  --color-panel: #0b0d12;
+  --color-edge: #23262f;
+  --color-neon: #ff2d3f;
+  --color-neon-soft: #ff7a85;
+  --color-ember: #ffb020;
+
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Consolas', ui-monospace, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-void);
+  color: #d4d4d8;
+  font-family: var(--font-mono);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Rejilla tecnica de fondo (se difumina hacia los bordes). */
+.grid-bg {
+  background-image:
+    linear-gradient(to right, rgb(255 45 63 / 0.07) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 45 63 / 0.07) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 30%, transparent 100%);
+}
+
+/* Lineas de escaneo tipo CRT. */
+.scanlines {
+  background: repeating-linear-gradient(
+    to bottom,
+    rgb(255 255 255 / 0.035) 0 1px,
+    transparent 1px 3px
+  );
+  opacity: 0.45;
+}
+
+.text-glow {
+  text-shadow: 0 0 22px rgb(255 45 63 / 0.6);
+}
+
+.led {
+  animation: led-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes led-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgb(255 45 63 / 0.55);
+  }
+  50% {
+    opacity: 0.55;
+    box-shadow: 0 0 0 6px rgb(255 45 63 / 0);
+  }
+}
+
+.led-ok {
+  animation: led-ok-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes led-ok-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgb(52 211 153 / 0.55);
+  }
+  50% {
+    opacity: 0.55;
+    box-shadow: 0 0 0 6px rgb(52 211 153 / 0);
+  }
+}
+
+.flicker {
+  animation: flicker 6s linear infinite;
+}
+
+@keyframes flicker {
+  0%,
+  92%,
+  100% {
+    opacity: 1;
+  }
+  93% {
+    opacity: 0.55;
+  }
+  94% {
+    opacity: 1;
+  }
+  96% {
+    opacity: 0.7;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .led,
+  .led-ok,
+  .flicker {
+    animation: none;
+  }
+}

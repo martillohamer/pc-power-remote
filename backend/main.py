@@ -1,0 +1,701 @@
+"""pc-power-remote — API local para control remoto del PC.
+
+Ejecutar en desarrollo:
+    uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+Variables de entorno:
+    APP_PIN            PIN exigido en la cabecera X-App-Pin (default: "134113").
+    APP_DRY_RUN        "1" para simular el apagado sin ejecutar shutdown.exe.
+    APP_MAC_ADDRESS    MAC de la NIC (opcional: si falta se autodetecta).
+    APP_WOL_BROADCAST  Broadcast del paquete magico (default: 255.255.255.255).
+    APP_WOL_PORT       Puerto UDP de Wake-on-LAN (default: 9).
+
+La MAC autodetectada se guarda en `backend/.env` para reutilizarse en el
+siguiente arranque. Un APP_MAC_ADDRESS definido en el entorno real siempre
+tiene prioridad sobre la deteccion automatica.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hmac
+import logging
+import os
+import platform
+import re
+import socket
+import subprocess
+import threading
+import time
+import uuid
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Annotated
+
+import psutil
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field, field_validator
+from starlette.websockets import WebSocketDisconnect
+
+try:
+    from wakeonlan import send_magic_packet
+except ImportError:  # la API de apagado sigue funcionando sin la libreria
+    send_magic_packet = None
+
+logger = logging.getLogger("pc_power_remote")
+if not logger.handlers:
+    # uvicorn solo configura sus propios loggers; este handler hace visibles los
+    # eventos de apagado/WOL en la misma terminal sin activar el resto de librerias.
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(
+        logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", "%H:%M:%S")
+    )
+    logger.addHandler(_handler)
+    logger.setLevel(logging.INFO)
+
+# --- Carga de .env -----------------------------------------------------------
+
+BACKEND_DIR = Path(__file__).resolve().parent
+ENV_FILE = BACKEND_DIR / ".env"
+_REAL_ENV_KEYS = set(os.environ)  # variables definidas antes de leer .env
+
+
+def _load_env_file(path: Path) -> None:
+    """Carga KEY=VALUE de .env sin sobrescribir variables ya definidas."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_env_file(ENV_FILE)
+
+# --- Configuracion -----------------------------------------------------------
+
+DEFAULT_PIN = "134113"
+APP_PIN = os.getenv("APP_PIN", DEFAULT_PIN).strip()
+DRY_RUN = os.getenv("APP_DRY_RUN", "").strip().lower() in {"1", "true", "yes", "on"}
+
+MAX_MINUTES = 24 * 60  # 24 h
+PIN_HEADER = "X-App-Pin"
+
+MAC_PATTERN = re.compile(r"^[0-9A-Fa-f]{2}([:-]?[0-9A-Fa-f]{2}){5}$")
+
+# ipconfig /all: "Physical Address" (en) o "Dirección física" (es).
+_IPCONFIG_MAC = re.compile(
+    r"(?:Physical Address|Direcci.n f.sica)[ .]*:\s*"
+    r"([0-9A-Fa-f]{2}(?:[-:][0-9A-Fa-f]{2}){5})",
+    re.IGNORECASE,
+)
+_IPCONFIG_GATEWAY = re.compile(
+    r"(?:Default Gateway|Puerta de enlace predeterminada)[ .]*:\s*"
+    r"\d{1,3}(?:\.\d{1,3}){3}",
+    re.IGNORECASE,
+)
+
+
+def normalize_mac(value: str) -> str:
+    """Normaliza una MAC a AA:BB:CC:DD:EE:FF. Lanza ValueError si no es valida."""
+    if not MAC_PATTERN.fullmatch(value.strip()):
+        raise ValueError("MAC invalida: usa el formato AA:BB:CC:DD:EE:FF")
+    raw = re.sub(r"[^0-9A-Fa-f]", "", value)
+    return ":".join(raw[index : index + 2] for index in range(0, 12, 2)).upper()
+
+
+def _env_mac() -> str | None:
+    raw = os.getenv("APP_MAC_ADDRESS", "").strip()
+    if not raw:
+        return None
+    try:
+        return normalize_mac(raw)
+    except ValueError:
+        logger.error(
+            "APP_MAC_ADDRESS invalida (%r): se ignora. Usa el formato AA:BB:CC:DD:EE:FF.",
+            raw,
+        )
+        return None
+
+
+def _lan_ip() -> str | None:
+    """IP local de la interfaz usada por la ruta por defecto (no envia trafico real)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        try:
+            sock.connect(("8.8.8.8", 80))
+            return sock.getsockname()[0]
+        except OSError:
+            return None
+
+
+def _parse_ipconfig(text: str, ip: str | None = None) -> str | None:
+    """MAC del adaptador que usa `ip`; sin IP, la del adaptador con puerta de enlace."""
+    for block in re.split(r"\r?\n\s*\r?\n", text):
+        match = _IPCONFIG_MAC.search(block)
+        if not match:
+            continue
+        if ip:
+            if ip not in block:
+                continue
+        elif not _IPCONFIG_GATEWAY.search(block):
+            continue
+        try:
+            return normalize_mac(match.group(1))
+        except ValueError:
+            continue
+    return None
+
+
+def _detect_system_mac() -> str | None:
+    """MAC de la NIC activa principal (Windows: ipconfig; fallback: uuid.getnode)."""
+    if platform.system() == "Windows":
+        try:
+            completed = subprocess.run(
+                ["ipconfig", "/all"],
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.warning("No se pudo ejecutar ipconfig: %s", exc)
+        else:
+            if completed.returncode == 0:
+                text = completed.stdout.decode("cp850", errors="replace")
+                mac = _parse_ipconfig(text, _lan_ip()) or _parse_ipconfig(text)
+                if mac:
+                    return mac
+
+    # Fallback portable. uuid.getnode() marca el bit multicast cuando la MAC
+    # es aleatoria (no corresponde a una tarjeta real), asi que se descarta.
+    node = uuid.getnode()
+    if not (node >> 40) & 1:
+        return ":".join(
+            f"{(node >> shift) & 0xFF:02X}" for shift in range(40, -1, -8)
+        )
+    return None
+
+
+_ENV_MAC_LINE = re.compile(r"^\s*APP_MAC_ADDRESS\s*=", re.IGNORECASE)
+
+
+def _write_env_mac(mac: str) -> bool:
+    """Crea/actualiza APP_MAC_ADDRESS en .env preservando el resto del archivo.
+
+    Devuelve True solo si el archivo cambio (evita recargas infinitas con --reload).
+    """
+    try:
+        lines = (
+            ENV_FILE.read_text(encoding="utf-8").splitlines()
+            if ENV_FILE.exists()
+            else []
+        )
+    except OSError as exc:
+        logger.warning("No se pudo leer %s: %s", ENV_FILE, exc)
+        return False
+
+    new_line = f"APP_MAC_ADDRESS={mac}"
+    updated: list[str] = []
+    replaced = False
+    for line in lines:
+        if _ENV_MAC_LINE.match(line):
+            if line.strip() == new_line:
+                return False
+            updated.append(new_line)
+            replaced = True
+        else:
+            updated.append(line)
+    if not replaced:
+        updated.append(new_line)
+
+    try:
+        ENV_FILE.write_text("\n".join(updated) + "\n", encoding="utf-8")
+    except OSError as exc:
+        logger.warning("No se pudo escribir %s: %s", ENV_FILE, exc)
+        return False
+    return True
+
+
+def _resolve_mac() -> tuple[str | None, str]:
+    """Resuelve la MAC efectiva y su origen.
+
+    Prioridad: APP_MAC_ADDRESS real > autodeteccion > valor de .env.
+    """
+    if "APP_MAC_ADDRESS" in _REAL_ENV_KEYS:
+        mac = _env_mac()
+        if mac:
+            return mac, "env"
+
+    detected = _detect_system_mac()
+    if detected:
+        if _write_env_mac(detected):
+            logger.info("MAC autodetectada %s guardada en %s", detected, ENV_FILE.name)
+        return detected, "auto"
+
+    mac = _env_mac()
+    if mac:
+        return mac, "env-file"
+    return None, "none"
+
+
+APP_MAC_ADDRESS, MAC_SOURCE = _resolve_mac()
+
+WOL_BROADCAST = (
+    os.getenv("APP_WOL_BROADCAST", "255.255.255.255").strip() or "255.255.255.255"
+)
+try:
+    WOL_PORT = int(os.getenv("APP_WOL_PORT", "9"))
+except ValueError:
+    logger.error("APP_WOL_PORT invalido: se usa el puerto 9.")
+    WOL_PORT = 9
+
+if APP_PIN == DEFAULT_PIN:
+    logger.warning(
+        "Usando el PIN por defecto (%s). Define APP_PIN antes de exponer la API en la LAN.",
+        DEFAULT_PIN,
+    )
+
+if APP_MAC_ADDRESS:
+    logger.info("Wake-on-LAN listo: MAC %s (origen: %s)", APP_MAC_ADDRESS, MAC_SOURCE)
+else:
+    logger.warning(
+        "No se pudo autodetectar la MAC. Define APP_MAC_ADDRESS o envia "
+        "{\"mac\": \"AA:BB:CC:DD:EE:FF\"} en /api/wake."
+    )
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """Imprime en la terminal las URLs para abrir la app desde el movil."""
+    host = _lan_ip() or "IP_DE_TU_PC"
+    pin_state = (
+        f"por defecto ({DEFAULT_PIN}) - define APP_PIN para cambiarlo"
+        if APP_PIN == DEFAULT_PIN
+        else "definido por la variable APP_PIN"
+    )
+    wol_state = (
+        f"{APP_MAC_ADDRESS} ({MAC_SOURCE})"
+        if APP_MAC_ADDRESS
+        else "no detectada - define APP_MAC_ADDRESS"
+    )
+    banner = [
+        "",
+        "=" * 66,
+        "  pc-power-remote  |  servidor listo",
+        "  Backend local   : http://localhost:8000",
+        f"  Backend red     : http://{host}:8000",
+        f"  Swagger         : http://{host}:8000/docs",
+        f"  Frontend (Vite) : http://{host}:5173",
+        f"  PIN             : {pin_state}",
+        f"  Wake-on-LAN     : {wol_state}",
+        "=" * 66,
+        "",
+    ]
+    print("\n".join(banner), flush=True)
+    logger.info("IP local detectada: %s (backend :8000, frontend :5173)", host)
+    yield
+
+
+app = FastAPI(
+    title="pc-power-remote",
+    description="API local para controlar el estado y la energia del PC desde la red local.",
+    version="0.6.0",
+    lifespan=lifespan,
+)
+
+# En desarrollo el frontend corre en otro origen (Vite: 5173), por eso se habilita CORS.
+# En produccion, restringir allow_origins a los origenes reales.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# --- Autenticacion por PIN ---------------------------------------------------
+
+
+def require_pin(
+    x_app_pin: Annotated[str | None, Header(alias=PIN_HEADER)] = None,
+) -> None:
+    """Dependency: valida la cabecera X-App-Pin contra APP_PIN.
+
+    Se usa comparacion en tiempo constante para no filtrar informacion del PIN
+    mediante diferencias de tiempo de respuesta.
+    """
+    if not x_app_pin or not hmac.compare_digest(
+        x_app_pin.encode("utf-8"), APP_PIN.encode("utf-8")
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="PIN invalido o ausente.",
+            headers={"WWW-Authenticate": PIN_HEADER},
+        )
+
+
+def _ws_pin_ok(websocket: WebSocket, pin: str | None) -> bool:
+    """Valida el PIN de un WebSocket: query param ?pin= o cabecera X-App-Pin."""
+    candidate = (pin or websocket.headers.get(PIN_HEADER) or "").strip()
+    return bool(candidate) and hmac.compare_digest(
+        candidate.encode("utf-8"), APP_PIN.encode("utf-8")
+    )
+
+
+# --- Modelos -----------------------------------------------------------------
+
+
+class ShutdownRequest(BaseModel):
+    minutes: int = Field(
+        ge=1,
+        le=MAX_MINUTES,
+        description="Minutos de espera antes de apagar el equipo.",
+        examples=[15],
+    )
+
+
+class ShutdownScheduled(BaseModel):
+    ok: bool = True
+    minutes: int
+    seconds: int
+    ends_at: str
+
+
+class ShutdownCancelled(BaseModel):
+    ok: bool = True
+    message: str
+
+
+class PowerState(BaseModel):
+    pending: bool
+    minutes: int | None = None
+    seconds_left: int | None = None
+    ends_at: str | None = None
+
+
+class WakeRequest(BaseModel):
+    mac: str | None = Field(
+        default=None,
+        description="MAC destino (AA:BB:CC:DD:EE:FF). Si se omite se usa APP_MAC_ADDRESS.",
+        examples=["AA:BB:CC:DD:EE:FF"],
+    )
+
+    @field_validator("mac")
+    @classmethod
+    def _normalize_mac(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        return normalize_mac(value)
+
+
+class WakeSent(BaseModel):
+    ok: bool = True
+    mac: str
+    broadcast: str
+    port: int
+
+
+class WolConfig(BaseModel):
+    mac_address: str | None
+    broadcast: str
+    port: int
+    source: str = Field(
+        default="none",
+        description="Origen de la MAC: env, auto, env-file o none.",
+    )
+
+
+class Telemetry(BaseModel):
+    cpu_usage: float
+    ram_usage: float
+    ram_used_mb: float
+    ram_total_mb: float
+    disk_usage: float
+    uptime_seconds: int
+
+
+TELEMETRY_INTERVAL = 1.5  # segundos entre muestras
+CPU_SAMPLE_SECONDS = 0.1  # ventana de medicion de CPU (en el hilo de trabajo)
+
+
+def collect_telemetry() -> Telemetry:
+    """Muestra puntual del sistema (se ejecuta en un hilo aparte).
+
+    cpu_percent usa interval=0.1 para que la primera muestra sea real: psutil
+    guarda el estado por hilo y un interval=None devolveria 0.0 la primera vez.
+    """
+    memory = psutil.virtual_memory()
+    disk = psutil.disk_usage(os.path.abspath(os.sep))
+    mib = 1024 * 1024
+    return Telemetry(
+        cpu_usage=round(float(psutil.cpu_percent(interval=CPU_SAMPLE_SECONDS)), 1),
+        ram_usage=round(float(memory.percent), 1),
+        ram_used_mb=round(memory.used / mib, 1),
+        ram_total_mb=round(memory.total / mib, 1),
+        disk_usage=round(float(disk.percent), 1),
+        uptime_seconds=max(0, int(time.time() - psutil.boot_time())),
+    )
+
+
+# --- Estado en memoria del apagado programado --------------------------------
+
+
+@dataclass(frozen=True)
+class _PendingShutdown:
+    ends_at: datetime
+    minutes: int
+
+
+_lock = threading.Lock()
+_pending: _PendingShutdown | None = None
+
+
+def _set_pending(pending: _PendingShutdown | None) -> None:
+    global _pending
+    with _lock:
+        _pending = pending
+
+
+def _read_pending() -> _PendingShutdown | None:
+    with _lock:
+        return _pending
+
+
+# --- Ejecucion de comandos de Windows ---------------------------------------
+
+
+def _decode(raw: bytes) -> str:
+    """shutdown.exe responde en la codificacion local de Windows (cp850 en es-PY)."""
+    for encoding in ("utf-8", "cp850", "cp1252"):
+        try:
+            return raw.decode(encoding).strip()
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace").strip()
+
+
+def _run_shutdown(args: list[str]) -> None:
+    """Ejecuta `shutdown` y traduce los fallos a HTTPException."""
+    if platform.system() != "Windows":
+        raise HTTPException(
+            status_code=501,
+            detail="Los comandos de apagado solo estan disponibles en Windows.",
+        )
+
+    if DRY_RUN:
+        logger.warning("APP_DRY_RUN activo: se omite la ejecucion de %s", args)
+        return
+
+    try:
+        completed = subprocess.run(args, capture_output=True, timeout=15, check=False)
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="No se encontro el comando 'shutdown' en el sistema.",
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="El comando shutdown no respondio a tiempo.",
+        ) from exc
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"No se pudo ejecutar shutdown: {exc}",
+        ) from exc
+
+    if completed.returncode == 0:
+        return
+
+    message = _decode(completed.stderr) or _decode(completed.stdout)
+
+    # 1116: no hay un apagado en curso que cancelar (Windows en es-PY).
+    if completed.returncode == 1116:
+        raise HTTPException(
+            status_code=409,
+            detail=message or "No hay un apagado programado para cancelar.",
+        )
+
+    raise HTTPException(
+        status_code=500,
+        detail=message or f"shutdown finalizo con codigo {completed.returncode}.",
+    )
+
+
+# --- Endpoints ---------------------------------------------------------------
+
+
+@app.get("/")
+def read_root() -> dict[str, str]:
+    """Healthcheck publico."""
+    return {"status": "online", "system": "Windows"}
+
+
+@app.get("/api/health")
+def health() -> dict[str, str]:
+    """Mismo payload que `/`, pero bajo /api para consumirse via el proxy de Vite."""
+    return {"status": "online", "system": "Windows"}
+
+
+@app.get(
+    "/api/state",
+    dependencies=[Depends(require_pin)],
+    response_model=PowerState,
+    summary="Estado del apagado programado",
+)
+def power_state() -> PowerState:
+    pending = _read_pending()
+    if pending is None:
+        return PowerState(pending=False)
+
+    seconds_left = int((pending.ends_at - datetime.now(timezone.utc)).total_seconds())
+    if seconds_left <= 0:
+        _set_pending(None)
+        return PowerState(pending=False)
+
+    return PowerState(
+        pending=True,
+        minutes=pending.minutes,
+        seconds_left=seconds_left,
+        ends_at=pending.ends_at.isoformat(),
+    )
+
+
+@app.post(
+    "/api/shutdown",
+    dependencies=[Depends(require_pin)],
+    response_model=ShutdownScheduled,
+    summary="Programa el apagado del equipo",
+)
+def schedule_shutdown(payload: ShutdownRequest) -> ShutdownScheduled:
+    seconds = payload.minutes * 60
+    _run_shutdown(["shutdown", "/s", "/t", str(seconds)])
+
+    ends_at = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+    _set_pending(_PendingShutdown(ends_at=ends_at, minutes=payload.minutes))
+
+    logger.info("Apagado programado en %s min (ends_at=%s)", payload.minutes, ends_at)
+    return ShutdownScheduled(
+        minutes=payload.minutes,
+        seconds=seconds,
+        ends_at=ends_at.isoformat(),
+    )
+
+
+@app.post(
+    "/api/cancel",
+    dependencies=[Depends(require_pin)],
+    response_model=ShutdownCancelled,
+    summary="Cancela un apagado programado",
+)
+def cancel_shutdown() -> ShutdownCancelled:
+    try:
+        _run_shutdown(["shutdown", "/a"])
+    except HTTPException as exc:
+        # Si el SO dice que no hay apagado pendiente, el estado local esta obsoleto.
+        if exc.status_code == 409:
+            _set_pending(None)
+        raise
+
+    _set_pending(None)
+    logger.info("Apagado cancelado")
+    return ShutdownCancelled(message="Apagado cancelado.")
+
+
+@app.get(
+    "/api/config",
+    dependencies=[Depends(require_pin)],
+    response_model=WolConfig,
+    summary="Configuracion de Wake-on-LAN del backend",
+)
+def wol_config() -> WolConfig:
+    return WolConfig(
+        mac_address=APP_MAC_ADDRESS,
+        broadcast=WOL_BROADCAST,
+        port=WOL_PORT,
+        source=MAC_SOURCE,
+    )
+
+
+@app.post(
+    "/api/wake",
+    dependencies=[Depends(require_pin)],
+    response_model=WakeSent,
+    summary="Envia un paquete magico Wake-on-LAN",
+)
+def wake(payload: WakeRequest | None = None) -> WakeSent:
+    if send_magic_packet is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Falta la libreria 'wakeonlan'. Ejecuta: pip install -r requirements.txt",
+        )
+
+    mac = (payload.mac if payload else None) or APP_MAC_ADDRESS
+    if not mac:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "No se pudo autodetectar la MAC y APP_MAC_ADDRESS no esta definida. "
+                "Configura la variable o envia {\"mac\": \"AA:BB:CC:DD:EE:FF\"} en el body."
+            ),
+        )
+
+    try:
+        send_magic_packet(mac, ip_address=WOL_BROADCAST, port=WOL_PORT)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"No se pudo enviar el paquete magico: {exc}",
+        ) from exc
+
+    logger.info("Wake-on-LAN enviado a %s via %s:%s", mac, WOL_BROADCAST, WOL_PORT)
+    return WakeSent(mac=mac, broadcast=WOL_BROADCAST, port=WOL_PORT)
+
+
+# --- Telemetria en tiempo real (WebSocket) -----------------------------------
+
+
+@app.websocket("/ws/telemetry")
+async def telemetry_socket(
+    websocket: WebSocket,
+    pin: Annotated[str | None, Query(description="PIN de la app")] = None,
+) -> None:
+    """Emite telemetria del sistema cada TELEMETRY_INTERVAL segundos.
+
+    El PIN puede venir en ?pin=... (los navegadores no permiten cabeceras
+    personalizadas en WebSocket) o en la cabecera X-App-Pin.
+    """
+    await websocket.accept()
+
+    if not _ws_pin_ok(websocket, pin):
+        await websocket.close(code=1008, reason="PIN invalido o ausente.")
+        logger.warning("Telemetria: conexion rechazada (PIN invalido)")
+        return
+
+    logger.info("Telemetria: cliente conectado (%s)", websocket.client)
+    try:
+        while True:
+            payload = await asyncio.to_thread(collect_telemetry)
+            await websocket.send_json(payload.model_dump())
+            await asyncio.sleep(max(0.1, TELEMETRY_INTERVAL - CPU_SAMPLE_SECONDS))
+    except WebSocketDisconnect:
+        logger.info("Telemetria: cliente desconectado")
+    except (RuntimeError, OSError) as exc:
+        # El cliente cerro la conexion entre muestras (send_json falla).
+        logger.info("Telemetria: conexion cerrada (%s)", exc)
+    finally:
+        try:
+            await websocket.close()
+        except RuntimeError:
+            pass
