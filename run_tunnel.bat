@@ -8,53 +8,54 @@ REM ============================================================
 
 REM --- Configuración ---
 set TUNNEL_PORT=5173
-set CLOUDFLARED_EXE=cloudflared
-set CLOUDFLARED_URL=https://developers.cloudflare.com/cloudflared/download
+set "CLOUDFLARED_EXE=cloudflared"
+set "CLOUDFLARED_URL=https://developers.cloudflare.com/cloudflared/download"
 
 REM --- 1. Detectar cloudflared ---
 echo [1/4] Buscando %CLOUDFLARED_EXE%...
 
-REM Busca en PATH y en directorios comunes
-set CLOUDFLARED_PATH=
-for /f "tokens=*" %I in ('where %CLOUDFLARED_EXE% 2^>nul') do set CLOUDFLARED_PATH=%I
+REM Busca en PATH del sistema usando el nombre directamente
+set "CLOUDFLARED_PATH="
+for /f "tokens=*" %I in ('where cloudflared.exe 2^>nul') do set "CLOUDFLARED_PATH=%I"
 
-REM Si no está en PATH, buscar en la misma carpeta que este script
+REM Si no está en PATH, intentar con nombre fijo en la misma carpeta que este script
 if not defined CLOUDFLARED_PATH (
-  if exist "%~dp0%CLOUDFLARED_EXE%.exe" (
-    set CLOUDFLARED_PATH=%~dp0%CLOUDFLARED_EXE%.exe
+  if exist "%~dp0cloudflared.exe" (
+    set "CLOUDFLARED_PATH=%~dp0cloudflared.exe"
   )
 )
 
-REM Si aún no se encuentra, descargar la última versión estable
+REM Si aún no se encuentra, descargar la última versión stable
 if not defined CLOUDFLARED_PATH (
   echo %CLOUDFLARED_EXE% no encontrado en PATH ni en la carpeta del script.
   echo Descargando desde %CLOUDFLARED_URL%...
   powershell -NoProfile -ExecutionPolicy Bypass -Command "
     $url = 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe'
-    $out = '%~dp0\.cloudflared\cloudflared.exe'
+    $out = '%~dp0.cloudflared\cloudflared.exe'
     if (-not (Test-Path (Split-Path $out))) { mkdir (Split-Path $out) }
     try {
       Invoke-WebRequest -Uri $url -OutFile $out
-      write-host 'Descarga completada: $out' -ForegroundColor Green
+      write-host 'Descarga completada' -ForegroundColor Green
     } catch {
-      write-host 'Fallo al descargar $url' -ForegroundColor Red
+      write-host 'Fallo al descargar' -ForegroundColor Red
       exit /b 1
     }
   "
-  if exist "%~dp0\.cloudflared\cloudflared.exe" (
-    set CLOUDFLARED_PATH=%~dp0\.cloudflared\cloudflared.exe
+  if exist "%~dp0.cloudflared\cloudflared.exe" (
+    set "CLOUDFLARED_PATH=%~dp0.cloudflared\cloudflared.exe"
   ) else (
     echo.
-    echo No se pudo descargar cloudflared automáticamente.
+    echo No se pudo descargar %CLOUDFLARED_EXE% automáticamente.
     echo Por favor descarga manualmente:
     echo   %CLOUDFLARED_URL%
-    echo y coloca cloudflared.exe en el PATH o en la misma carpeta que este script.
+    echo y coloca %CLOUDFLARED_EXE%.exe en el PATH o en la misma carpeta que este script.
     pause
     exit /b 1
   )
 )
 
-echo %CLOUDFLARED_EXE% encontrado en: %CLOUDFLARED_PATH%
+REM Mostrar resultado (usando comillas para protección)
+echo %CLOUDFLARED_EXE% encontrado en: "%CLOUDFLARED_PATH%"
 
 REM --- 2. Verificar que el backend y frontend estén corriendo ---
 echo.
@@ -71,7 +72,7 @@ if not exist ".\frontend\run_frontend.bat" (
   exit /b 1
 )
 
-REM Verificar que el backend responde (puede fallar sin efectos si no está corriendo)
+REM Verificar que el backend responde
 echo Verificando que el backend este accesible en http://127.0.0.1:%TUNNEL_PORT%...
 
 REM --- 3. Iniciar túnel ---
@@ -93,7 +94,7 @@ echo.
 echo [4/4] Obteniendo URL pública...
 
 for /f "usebacktokens=2 delims=:" %%A in ('findstr /i "trycloudflare" "tunnel_output.txt"') do (
-  set PUBLIC_URL=%%A
+  set "PUBLIC_URL=%%A"
   goto :show_url
 )
 
