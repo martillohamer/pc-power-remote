@@ -13,6 +13,10 @@ Variables de entorno:
 La MAC autodetectada se guarda en `backend/.env` para reutilizarse en el
 siguiente arranque. Un APP_MAC_ADDRESS definido en el entorno real siempre
 tiene prioridad sobre la deteccion automatica.
+
+Nueva Fase 4.4 - Caja Negra Forense:
+  - /api/forensic/processes : lista los 10 procesos de mayor consumo de CPU/RAM.
+  - /api/forensic/logs    : log circular de eventos críticos (picos, suspensiones, reinicios).
 """
 
 from __future__ import annotations
@@ -305,7 +309,6 @@ async def lifespan(_: FastAPI):
     logger.info("IP local detectada: %s (backend :8000, frontend :5173)", host)
     yield
 
-
 app = FastAPI(
     title="pc-power-remote",
     description="API local para controlar el estado y la energia del PC desde la red local.",
@@ -327,7 +330,6 @@ app.add_middleware(
 
 
 # --- Autenticacion por PIN ---------------------------------------------------
-
 
 def require_pin(
     x_app_pin: Annotated[str | None, Header(alias=PIN_HEADER)] = None,
@@ -445,147 +447,97 @@ class GuardianState(BaseModel):
     suspended: bool = False
 
 
-TELEMETRY_INTERVAL = 1.5  # segundos entre muestras
-CPU_SAMPLE_SECONDS = 0.1  # ventana de medicion de CPU (en el hilo de trabajo)
-GUARDIAN_CONSECUTIVE_LOW = 3  # muestreos consecutivos por debajo del umbral
-GUARDIAN_CPU_SAMPLE_INTERVAL = 10  # segundos entre muestreos de decisi\u00f3n
-GUARDIAN_DEFAULT_THRESHOLD = 5.0  # %
-GUARDIAN_DEFAULT_INACTIVITY = 30  # minutos
+# --- Sistema de logs forense (caja negra) -----------------------------------
+
+MAX_LOG_ENTRIES = 100  # máximo de entradas en el log circular
 
 
-_guardian = GuardianState()
-_guardian_lock = threading.Lock()
-_guardian_thread: threading.Thread | None = None
-_guardian_stop_event = threading.Event()
+class ForensicLogEntry(BaseModel):
+    timestamp: str
+    event: str  # "cpu_pico", "suspension", "restart", "alert", etc.
+    details: str = ""  # mensaje descriptivo opcional
 
 
-def _guardian_monitor() -> None:
-    # Monitor de CPU para suspension automática
-    global _guardian
-    cpu_threshold = _guardian.cpu_threshold_percent
-    inactivity_minutes = _guardian.inactivity_minutes
-    enabled = _guardian.enabled
-    if not enabled:
-        with _guardian_lock:
-            _guardian.last_check = datetime.utcnow().isoformat()
-        return
-    consecutive_low = 0
-    total_low_seconds = 0
-    sample_interval = 3
-    while not _guardian_stop_event.is_set():
-        try:
-            cpu_pct = psutil.cpu_percent(interval=CPU_SAMPLE_SECONDS)
-            total_low_seconds += sample_interval
-            consecutive_low += 1
-            if cpu_pct < cpu_threshold:
-                if consecutive_low >= GUARDIAN_CONSECUTIVE_LOW and total_low_seconds >= (inactivity_minutes * 60):
-                    _attempt_suspend()
-                    consecutive_low = 0
-                    total_low_seconds = 0
-            else:
-                consecutive_low = 0
-                total_low_seconds = 0
-            with _guardian_lock:
-                _guardian.last_check = datetime.utcnow().isoformat()
-                _guardian.suspended = total_low_seconds >= (inactivity_minutes * 60) and consecutive_low >= GUARDIAN_CONSECUTIVE_LOW
-            _guardian_stop_event.wait(timeout=GUARDIAN_CPU_SAMPLE_INTERVAL)
-        except RuntimeError:
-            break
-        except Exception as exc:
-            logger.error(\"Error en monitor guardian: %s\", exc)
-            _guardian_stop_event.wait(timeout=5.0)
+# Almacenamiento en memoria (se reinicia al reiniciar el backend)
+_forensic_log: list[ForensicLogEntry] = []
 
-GUARDIAN_CONSECUTIVE_LOW = 3
-GUARDIAN_CPU_SAMPLE_INTERVAL = 10
 
-def _attempt_suspend() -> None:
-    if DRY_RUN:
-        logger.info(\"Suspensión programada (Dry Run)\")
-        with _guardian_lock:
-            _guardian.suspended = True
-        return
-    cmd = [\"rundll32.exe\", \"powrprof.dll,SetSuspendState\", \"0,1,0\"]
-    try:
-        subprocess.run(cmd, capture_output=True, timeout=5, check=False)
-        logger.info(\"Suspensión ejecutada\")
-    except FileNotFoundError:
-        logger.error(\"No se encontro rundll32.exe\")
-    except OSError as exc:
-        logger.error(\"Error al ejecutar suspensión: %s\", exc)
-    with _guardian_lock:
-        _guardian.suspended = True
+class ForensicProcessInfo(BaseModel):
+    pid: int
+    name: str
+    cpu_percent: float
+    memory_mb: float
+    status: str
 
-def _reset_guardian() -> None:
-    global _guardian
-    with _guardian_lock:
-        _guardian.enabled = False
-        _guardian.suspended = False
-        _guardian.cpu_threshold_percent = GUARDIAN_DEFAULT_THRESHOLD
-        _guardian.inactivity_minutes = GUARDIAN_DEFAULT_INACTIVITY
-        _guardian.last_check = None
 
-def _start_guardian_thread() -> None:
-    global _guardian_thread, _guardian_stop_event
-    if _guardian_thread and _guardian_thread.is_alive():
-        _guardian_stop_event.set()
-        _guardian_thread.join(timeout=5.0)
-    _guardian_stop_event = threading.Event()
-    with _guardian_lock:
-        _guardian.enabled = False
-        _guardian.suspended = False
-    _guardian_thread = threading.Thread(target=_guardian_monitor, daemon=True)
-    _guardian_thread.start()
-    logger.info(\"Hilo de guardian de energía iniciado\")
+# Helper para añadir entradas al log forense
+def _log_forensic(event: str, details: str = "") -> None:
+    """Añade una entrada al log circular forense."""
+    entry = ForensicLogEntry(timestamp=datetime.now(timezone.utc).isoformat(), event=event, details=details)
+    _forensic_log.append(entry)
+    # Mantener solo los MAX_LOG_ENTRIES entradas
+    if len(_forensic_log) > MAX_LOG_ENTRIES:
+        _forensic_log.pop(0)
 
-def _stop_guardian_thread() -> None:
-    global _guardian_thread
-    if _guardian_thread and _guardian_thread.is_alive():
-        _guardian_stop_event.set()
-        _guardian_thread.join(timeout=10.0)
-        _guardian_thread = None
-        logger.info(\"Hilo de guardian detenido\")
 
-def collect_telemetry() -> Telemetry:'''
-    """Muestra puntual del sistema (se ejecuta en un hilo aparte).
+# --- Endpoints forenses ------------------------------------------------------
 
-    cpu_percent usa interval=0.1 para que la primera muestra sea real: psutil
-    guarda el estado por hilo y un interval=None devolveria 0.0 la primera vez.
+@app.get(
+    "/api/forensic/processes",
+    dependencies=[Depends(require_pin)],
+    summary="Los 10 procesos de mayor consumo de CPU y RAM",
+)
+def forensic_processes() -> list[ForensicProcessInfo]:
+    """Retorna los procesos actuales que más CPU y memoria RAM consumen.
+
+    Cada elemento contiene: pid, nombre, uso de CPU %, memoria en MB y estado.
+    Solo está disponible cuando el PIN se proporciona en la cabecera X-App-Pin.
     """
-    memory = psutil.virtual_memory()
-    disk = psutil.disk_usage(os.path.abspath(os.sep))
-    mib = 1024 * 1024
-    return Telemetry(
-        cpu_usage=round(float(psutil.cpu_percent(interval=CPU_SAMPLE_SECONDS)), 1),
-        ram_usage=round(float(memory.percent), 1),
-        ram_used_mb=round(memory.used / mib, 1),
-        ram_total_mb=round(memory.total / mib, 1),
-        disk_usage=round(float(disk.percent), 1),
-        uptime_seconds=max(0, int(time.time() - psutil.boot_time())),
-    )
+    try:
+        processes = []
+        for proc in psutil.process_iter(["pid", "name", "cpu_percent", "memory_info", "status"]):
+            try:
+                info = proc.info
+                if info.get("name") in (None, "System Idle Process", "System"):
+                    continue
+                memory_mb = 0.0
+                if info.get("memory_info"):
+                    memory_mb = round(float(info["memory_info"].rss) / (1024 * 1024), 1)
+                processes.append(
+                    {
+                        "pid": info["pid"],
+                        "name": info["name"],
+                        "cpu_percent": round(float(info.get("cpu_percent", 0)), 1),
+                        "memory_mb": memory_mb,
+                        "status": info.get("status", "unknown"),
+                    }
+                )
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+
+        # Ordenar por consumo combinado de CPU + memoria (mayor primero)
+        processes.sort(key=lambda p: (p["cpu_percent"] or 0) + (p["memory_mb"] or 0), reverse=True)
+
+        # Retornar solo los top 10
+        return processes[:10]
+    except Exception as exc:
+        logger.error("Error al obtener procesos forenses: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Error interno: {exc}")
 
 
-# --- Estado en memoria del apagado programado --------------------------------
+@app.get(
+    "/api/forensic/logs",
+    dependencies=[Depends(require_pin)],
+    summary="Log circular de eventos críticos del sistema",
+)
+def forensic_logs_endpoint() -> list[ForensicLogEntry]:
+    """Retorna el log circular de los últimos eventos críticos.
 
-
-@dataclass(frozen=True)
-class _PendingShutdown:
-    ends_at: datetime
-    minutes: int
-
-
-_lock = threading.Lock()
-_pending: _PendingShutdown | None = None
-
-
-def _set_pending(pending: _PendingShutdown | None) -> None:
-    global _pending
-    with _lock:
-        _pending = pending
-
-
-def _read_pending() -> _PendingShutdown | None:
-    with _lock:
-        return _pending
+    Incluye picos de CPU, intentos de suspensión, reinicios o alertas de
+    autodefensa. El log se mantiene en memoria y se reinicia al reiniciar
+    el servidor.
+    """
+    return list(_forensic_log)
 
 
 # --- Ejecucion de comandos de Windows ---------------------------------------
@@ -646,6 +598,179 @@ def _run_shutdown(args: list[str]) -> None:
     raise HTTPException(
         status_code=500,
         detail=message or f"shutdown finalizo con codigo {completed.returncode}.",
+    )
+
+
+# --- Estado en memoria del apagado programado --------------------------------
+
+
+@dataclass(frozen=True)
+class _PendingShutdown:
+    ends_at: datetime
+    minutes: int
+
+
+_lock = threading.Lock()
+_pending: _PendingShutdown | None = None
+
+
+def _set_pending(pending: _PendingShutdown | None) -> None:
+    global _pending
+    with _lock:
+        _pending = pending
+
+
+def _read_pending() -> _PendingShutdown | None:
+    with _lock:
+        return _pending
+
+
+# --- Reloj del countdown -----------------------------------------------------
+
+
+# --- Funciones auxiliares de logging ----------------------------------------
+
+def _log_forensic(event: str, details: str = "") -> None:
+    """Añade una entrada al log circular forense."""
+    entry = ForensicLogEntry(timestamp=datetime.now(timezone.utc).isoformat(), event=event, details=details)
+    _forensic_log.append(entry)
+    # Mantener solo los MAX_LOG_ENTRIES entradas
+    if len(_forensic_log) > MAX_LOG_ENTRIES:
+        _forensic_log.pop(0)
+
+
+# --- Guardian de energia -----------------------------------------------------
+
+
+_guardian = GuardianState()
+_guardian_lock = threading.Lock()
+_guardian_thread: threading.Thread | None = None
+_guardian_stop_event = threading.Event()
+
+
+def _guardian_monitor() -> None:
+    # Monitor de CPU para suspension automática
+    global _guardian
+    cpu_threshold = _guardian.cpu_threshold_percent
+    inactivity_minutes = _guardian.inactivity_minutes
+    enabled = _guardian.enabled
+    if not enabled:
+        with _guardian_lock:
+            _guardian.last_check = datetime.utcnow().isoformat()
+        return
+    consecutive_low = 0
+    total_low_seconds = 0
+    sample_interval = 3
+    while not _guardian_stop_event.is_set():
+        try:
+            cpu_pct = psutil.cpu_percent(interval=CPU_SAMPLE_SECONDS)
+            total_low_seconds += sample_interval
+            consecutive_low += 1
+            if cpu_pct < cpu_threshold:
+                if consecutive_low >= GUARDIAN_CONSECUTIVE_LOW and total_low_seconds >= (inactivity_minutes * 60):
+                    _attempt_suspend()
+                    consecutive_low = 0
+                    total_low_seconds = 0
+            else:
+                consecutive_low = 0
+                total_low_seconds = 0
+            with _guardian_lock:
+                _guardian.last_check = datetime.utcnow().isoformat()
+                _guardian.suspended = total_low_seconds >= (inactivity_minutes * 60) and consecutive_low >= GUARDIAN_CONSECUTIVE_LOW
+            _guardian_stop_event.wait(timeout=GUARDIAN_CPU_SAMPLE_INTERVAL)
+        except RuntimeError:
+            break
+        except Exception as exc:
+            logger.error("Error en monitor guardian: %s", exc)
+            _guardian_stop_event.wait(timeout=5.0)
+
+
+GUARDIAN_CONSECUTIVE_LOW = 3
+GUARDIAN_CPU_SAMPLE_INTERVAL = 10
+GUARDIAN_DEFAULT_THRESHOLD = 5.0
+GUARDIAN_DEFAULT_INACTIVITY = 30
+
+
+def _attempt_suspend() -> None:
+    _log_forensic("suspension", "Suspensión programada" if DRY_RUN else "Suspensión ejecutada")
+
+    if DRY_RUN:
+        logger.info("Suspensión programada (Dry Run)")
+        with _guardian_lock:
+            _guardian.suspended = True
+        return
+    cmd = ["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"]
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=5, check=False)
+        logger.info("Suspensión ejecutada")
+    except FileNotFoundError:
+        logger.error("No se encontro rundll32.exe")
+    except OSError as exc:
+        logger.error("Error al ejecutar suspensión: %s", exc)
+    with _guardian_lock:
+        _guardian.suspended = True
+
+
+def _reset_guardian() -> None:
+    global _guardian
+    with _guardian_lock:
+        _guardian.enabled = False
+        _guardian.suspended = False
+        _guardian.cpu_threshold_percent = GUARDIAN_DEFAULT_THRESHOLD
+        _guardian.inactivity_minutes = GUARDIAN_DEFAULT_INACTIVITY
+        _guardian.last_check = None
+
+
+def _start_guardian_thread() -> None:
+    global _guardian_thread, _guardian_stop_event
+    if _guardian_thread and _guardian_thread.is_alive():
+        _guardian_stop_event.set()
+        _guardian_thread.join(timeout=5.0)
+    _guardian_stop_event = threading.Event()
+    with _guardian_lock:
+        _guardian.enabled = False
+        _guardian.suspended = False
+    _guardian_thread = threading.Thread(target=_guardian_monitor, daemon=True)
+    _guardian_thread.start()
+    logger.info("Hilo de guardian de energía iniciado")
+
+
+def _stop_guardian_thread() -> None:
+    global _guardian_thread
+    if _guardian_thread and _guardian_thread.is_alive():
+        _guardian_stop_event.set()
+        _guardian_thread.join(timeout=10.0)
+        _guardian_thread = None
+        logger.info("Hilo de guardian detenido")
+
+
+# --- Telemetria en tiempo real (WebSocket) -----------------------------------
+
+
+TELEMETRY_INTERVAL = 1.5  # segundos entre muestras
+CPU_SAMPLE_SECONDS = 0.1  # ventana de medicion de CPU (en el hilo de trabajo)
+GUARDIAN_CONSECUTIVE_LOW = 3  # muestreos consecutivos por debajo del umbral
+GUARDIAN_CPU_SAMPLE_INTERVAL = 10  # segundos entre muestreos de decisi.on
+GUARDIAN_DEFAULT_THRESHOLD = 5.0  # %
+GUARDIAN_DEFAULT_INACTIVITY = 30  # minutos
+
+
+def collect_telemetry() -> Telemetry:
+    """Muestra puntual del sistema (se ejecuta en un hilo aparte).
+
+    cpu_percent usa interval=0.1 para que la primera muestra sea real: psutil
+    guarda el estado por hilo y un interval=None devolveria 0.0 la primera vez.
+    """
+    memory = psutil.virtual_memory()
+    disk = psutil.disk_usage(os.path.abspath(os.sep))
+    mib = 1024 * 1024
+    return Telemetry(
+        cpu_usage=round(float(psutil.cpu_percent(interval=CPU_SAMPLE_SECONDS)), 1),
+        ram_usage=round(float(memory.percent), 1),
+        ram_used_mb=round(memory.used / mib, 1),
+        ram_total_mb=round(memory.total / mib, 1),
+        disk_usage=round(float(disk.percent), 1),
+        uptime_seconds=max(0, int(time.time() - psutil.boot_time())),
     )
 
 
@@ -719,7 +844,7 @@ def cancel_shutdown() -> ShutdownCancelled:
     try:
         _run_shutdown(["shutdown", "/a"])
     except HTTPException as exc:
-        # Si el SO dice que no hay apagado pendiente, el estado local esta obsoleto.
+        # Si el SO dice que no habia nada programado, el estado local esta obsoleto.
         if exc.status_code == 409:
             _set_pending(None)
         raise
