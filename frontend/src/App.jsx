@@ -7,7 +7,7 @@ import ForensicPanel from './ForensicPanel'
 const STORAGE_KEY = 'pc-power-remote.pin'
 const DEFAULT_PIN = '134113'
 const MAC_STORAGE_KEY = 'pc-power-remote.mac'
-const TIMES = [5, 15, 30, 60, 90]
+const TIMES = [3, 5, 15, 30, 60, 90, 120, 150]
 const PIN_PATTERN = /^\d{4,12}$/
 const MAC_PATTERN = /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/
 
@@ -800,6 +800,27 @@ export default function App() {
             ))}
           </div>
         </section>
+
+        {/* Botón central Terminator - Apagado inmediato nivel elite */}
+        <div className="mt-6 flex items-center justify-center">
+          <button
+            type="button"
+            onClick={() => {
+              const confirmed = window.confirm('¿APAGADO INMEDIATO NIVEL TERMINATOR?\nEl equipo se apagara al instante.\n¿Continuar?');
+              if (confirmed) {
+                scheduleShutdown(0);
+              }
+            }}
+            className="relative group w-full max-w-sm bg-neon/20 border-2 border-red-500/50 rounded-lg py-4 px-6 text-center text-[12px] uppercase font-bold tracking-[0.3em] text-red-400 shadow-[0_0_30px_-10px_#ff0000] transition-all duration-300 hover:shadow-[0_0_50px_-15px_#ff3333] hover:text-red-300 active:shadow-[0_0_20px_-10px_#cc0000] disabled:opacity-40 disabled:cursor-not-allowed"
+            disabled={locked}
+            aria-label="Apagado inmediato nivel Terminator"
+          >
+            <span className="relative">APAGADO AUTOMÁTICO NIVEL TERMINATOR</span>
+            <svg class="absolute -inset-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18 6L6 18M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
 
         <button
           type="button"
