@@ -842,16 +842,92 @@ def schedule_shutdown(payload: ShutdownRequest) -> ShutdownScheduled:
 )
 def cancel_shutdown() -> ShutdownCancelled:
     try:
+        # Ejecutar shutdown /a para abortar cualquier apagado programado
+        # Este comando solo funciona si hay un apagado en curso; si no, devuelve error 409 que ignoramos
         _run_shutdown(["shutdown", "/a"])
     except HTTPException as exc:
         # Si el SO dice que no habia nada programado, el estado local esta obsoleto.
         if exc.status_code == 409:
             _set_pending(None)
-        raise
+        else:
+            # Cualquier otro error lo propagamos
+            raise
 
+    # Limpiar estado local del temporizador de apagado para reflejar en la UI
     _set_pending(None)
-    logger.info("Apagado cancelado")
-    return ShutdownCancelled(message="Apagado cancelado.")
+
+    logger.info("Apagado cancelado y estado local limpiado")
+    return ShutdownCancelled(message="Apagado cancelado. El temporizador fue abortado. El equipo sigue encendido.")
+
+
+# --- Endpoints de Control de Sesión Windows ---
+
+def _lock_workstation() -> dict[str, str]:
+    """Bloquea la sesión de trabajo de Windows de forma remota.
+    
+    Ejecuta rundll32.exe user32.dll,LockWorkStation para bloquear la estación de trabajo.
+    Retorna un diccionario con el estado y mensaje descriptivo.
+    """
+    cmd = ["rundll32.exe", "user32.dll,LockWorkStation"]
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=5, check=False)
+        return {"status": "locked", "message": "Sesión bloqueada exitosamente"}
+    except FileNotFoundError:
+        return {"status": "error", "message": "No se encontró rundll32.exe"}
+    except OSError as exc:
+        return {"status": "error", "message": f"Error al bloquear sesión: {exc}"}
+
+
+def _unlock_workstation() -> dict[str, str]:
+    """Intenta desbloquear la sesión de Windows.
+    
+    En Windows, el desbloqueo requiere que el usuario ingrese su contraseña.
+    Este comando solo funciona si ya hay una sesión bloqueada por el sistema.
+    """
+    cmd = ["shutdown", "/l"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=5, check=False)
+        if result.returncode == 0:
+            return {"status": "unlocked", "message": "Sesión desbloqueada"}
+        else:
+            return {"status": "locked", "message": "No se pudo desbloquear (requiere contraseña)"}
+    except FileNotFoundError:
+        return {"status": "error", "message": "No se encontró el comando shutdown"}
+    except OSError as exc:
+        return {"status": "error", "message": f"Error al intentar desbloquear: {exc}"}
+
+
+@app.get(
+    "/api/windows/lock",
+    dependencies=[Depends(require_pin)],
+    summary="Bloquea la sesión de trabajo del Windows local",
+)
+def windows_lock() -> dict[str, str]:
+    """Bloquea inmediatamente la sesión de trabajo del Windows local.
+    
+    Ejecuta rundll32.exe user32.dll,LockWorkStation para bloquear la estación de trabajo.
+    Requiere PIN en la cabecera X-App-Pin.
+    """
+    result = _lock_workstation()
+    logger.info("Solicitud de bloqueo de sesión: %s", result)
+    return result
+
+
+@app.get(
+    "/api/windows/unlock",
+    dependencies=[Depends(require_pin)],
+    summary="Intenta desbloquear la sesión de Windows",
+)
+def windows_unlock() -> dict[str, str]:
+    """Intenta desbloquear la sesión de trabajo del Windows local.
+    
+    Ejecuta shutdown /l para solicitar el desbloqueo.
+    Requiere PIN en la cabecera X-App-Pin.
+    Nota: El desbloqueo requiere que el usuario ingrese su contraseña.
+    """
+    result = _unlock_workstation()
+    logger.info("Solicitud de desbloqueo de sesión: %s", result)
+    return result
 
 
 @app.get(
