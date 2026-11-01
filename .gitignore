@@ -14,3 +14,7 @@ dist/
 *.log
 .vscode/
 .idea/
+
+# Tests / tunnel
+.pytest_cache/
+.cloudflared/
