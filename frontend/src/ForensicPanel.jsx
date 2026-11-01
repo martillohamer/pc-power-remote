@@ -5,7 +5,7 @@ const FORENSIC_API_BASE = "/api/forensic"
 // Estilos T-800 para el panel forense
 const forensicStyles = {
   panel: "border border-emerald-500/40 bg-panel/80 p-4 rounded-lg mb-4",
-  table: "w-full min-w-[600px] rounded-lg overflow-hidden",
+  table: "table-fixed w-full rounded-lg overflow-hidden",
   header: "text-[10px] uppercase tracking-[0.3em] text-emerald-400/80 border-b border-emerald-500/20 pb-2 mb-4",
   title: "text-white font-bold tracking-tight",
   loading: "text-emerald-400 text-sm italic",
@@ -129,57 +129,55 @@ export default function ForensicPanel() {
         )}
 
         {processes.length > 0 && (
-          <table className={forensicStyles.table}>
-            <thead>
-              <tr className="border-b border-emerald-500/20">
-                <th className="text-[9px] font-medium text-zinc-400 uppercase tracking-[0.1em]">
-                  PID
-                </th>
-                <th className="text-[9px] font-medium text-zinc-400 uppercase tracking-[0.1em]">
-                  Nombre
-                </th>
-                <th className="text-[9px] font-medium text-zinc-400 uppercase tracking-[0.1em]">
-                  CPU %
-                </th>
-                <th className="text-[9px] font-medium text-zinc-400 uppercase tracking-[0.1em]">
-                  Memoria (MB)
-                </th>
-                <th className="text-[9px] font-medium text-zinc-400 uppercase tracking-[0.1em]">
-                  Status
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {processes.map((proc) => (
-                <tr
-                  key={proc.pid}
-                  className="border-b border-emerald-500/10 hover:bg-panel/50"
-                >
-                  <td className="text-[9px] font-mono text-zinc-300">{proc.pid}</td>
-                  <td className="text-[9px] font-medium text-zinc-200">{proc.name}</td>
-                  <td>
-                    <div className="w-full bg-panel/50 rounded-full h-2">
-                      <div
-                        className="bg-emerald-500 h-2 rounded-full transition-width duration-500"
-                      >
-                        <div
-                          style={{ width: `${proc.cpu_percent}%` }}
-                          className="h-full rounded-full transition-width duration-500"
-                        />
-                      </div>
-                      <span className="text-[9px] text-emerald-300 absolute right-1">
-                        {proc.cpu_percent.toFixed(1)}%
-                      </span>
-                    </div>
-                  </td>
-                  <td className="text-[9px] font-mono text-zinc-300">
-                    {proc.memory_mb.toFixed(1)}
-                  </td>
-                  <td className="text-[9px] text-zinc-400">{proc.status}</td>
+          <div className="overflow-x-auto">
+            <table className={forensicStyles.table}>
+              <thead>
+                <tr className="border-b border-emerald-500/20">
+                  <th className="text-[9px] font-medium text-zinc-400 uppercase tracking-[0.1em]">
+                    PID
+                  </th>
+                  <th className="text-[9px] font-medium text-zinc-400 uppercase tracking-[0.1em]">
+                    Nombre
+                  </th>
+                  <th className="text-[9px] font-medium text-zinc-400 uppercase tracking-[0.1em]">
+                    CPU %
+                  </th>
+                  <th className="text-[9px] font-medium text-zinc-400 uppercase tracking-[0.1em]">
+                    Memoria (MB)
+                  </th>
+                  <th className="hidden sm:table-cell text-[9px] font-medium text-zinc-400 uppercase tracking-[0.1em]">
+                    Status
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {processes.map((proc) => (
+                  <tr
+                    key={proc.pid}
+                    className="border-b border-emerald-500/10 hover:bg-panel/50"
+                  >
+                    <td className="text-[9px] font-mono text-zinc-300">{proc.pid}</td>
+                    <td className="text-[9px] font-medium text-zinc-200">{proc.name}</td>
+                    <td>
+                      <div className="relative h-3 w-full overflow-hidden rounded-full bg-panel/50">
+                        <div
+                          style={{ width: `${Math.min(100, proc.cpu_percent)}%` }}
+                          className="h-full rounded-full bg-emerald-500 transition-[width] duration-500"
+                        />
+                        <span className="absolute inset-y-0 right-1 flex items-center text-[9px] text-emerald-100">
+                          {proc.cpu_percent.toFixed(1)}%
+                        </span>
+                      </div>
+                    </td>
+                    <td className="text-[9px] font-mono text-zinc-300">
+                      {proc.memory_mb.toFixed(1)}
+                    </td>
+                    <td className="hidden sm:table-cell text-[9px] text-zinc-400">{proc.status}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
