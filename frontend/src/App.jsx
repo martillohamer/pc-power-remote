@@ -411,7 +411,9 @@ export default function App() {
       if (normalized === 'apagar') {
         scheduleShutdown(5)
       } else if (normalized === 'terminator') {
-        scheduleShutdown(0)
+        if (window.confirm('¿APAGADO INMEDIATO NIVEL TERMINATOR?\nEl equipo se apagará al instante forzando el cierre de aplicaciones.\n¿Continuar?')) {
+          scheduleShutdown(0)
+        }
       } else if (normalized === 'estado') {
         fetch('/api/state', { headers: { 'X-App-Pin': pin } })
           .then((r) => r.json())
