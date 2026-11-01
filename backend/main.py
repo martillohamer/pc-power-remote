@@ -939,26 +939,7 @@ def _lock_workstation() -> dict[str, str]:
         return {"status": "error", "message": f"Error al bloquear sesión: {exc}"}
 
 
-def _unlock_workstation() -> dict[str, str]:
-    """Intenta desbloquear la sesión de Windows.
-    
-    En Windows, el desbloqueo requiere que el usuario ingrese su contraseña.
-    Este comando solo funciona si ya hay una sesión bloqueada por el sistema.
-    """
-    cmd = ["shutdown", "/l"]
-    try:
-        result = subprocess.run(cmd, capture_output=True, timeout=5, check=False)
-        if result.returncode == 0:
-            return {"status": "unlocked", "message": "Sesión desbloqueada"}
-        else:
-            return {"status": "locked", "message": "No se pudo desbloquear (requiere contraseña)"}
-    except FileNotFoundError:
-        return {"status": "error", "message": "No se encontró el comando shutdown"}
-    except OSError as exc:
-        return {"status": "error", "message": f"Error al intentar desbloquear: {exc}"}
-
-
-@app.get(
+@app.post(
     "/api/windows/lock",
     dependencies=[Depends(require_pin)],
     summary="Bloquea la sesión de trabajo del Windows local",
@@ -967,27 +948,10 @@ def windows_lock() -> dict[str, str]:
     """Bloquea inmediatamente la sesión de trabajo del Windows local.
     
     Ejecuta rundll32.exe user32.dll,LockWorkStation para bloquear la estación de trabajo.
-    Requiere PIN en la cabecera X-App-Pin.
+    Requiere PIN en la cabecera X-App-Pin. Solo se expone via POST; GET devuelve 405.
     """
     result = _lock_workstation()
     logger.info("Solicitud de bloqueo de sesión: %s", result)
-    return result
-
-
-@app.get(
-    "/api/windows/unlock",
-    dependencies=[Depends(require_pin)],
-    summary="Intenta desbloquear la sesión de Windows",
-)
-def windows_unlock() -> dict[str, str]:
-    """Intenta desbloquear la sesión de trabajo del Windows local.
-    
-    Ejecuta shutdown /l para solicitar el desbloqueo.
-    Requiere PIN en la cabecera X-App-Pin.
-    Nota: El desbloqueo requiere que el usuario ingrese su contraseña.
-    """
-    result = _unlock_workstation()
-    logger.info("Solicitud de desbloqueo de sesión: %s", result)
     return result
 
 

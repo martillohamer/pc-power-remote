@@ -83,8 +83,8 @@ Todas exigen la cabecera `X-App-Pin` salvo `/` y `/api/health`. El WebSocket rec
 | `/api/wake` | POST | Envía el paquete mágico WOL **desde el propio PC** (ver sección 8) |
 | `/api/config` | GET | MAC, broadcast, puerto y origen de la configuración WOL |
 | `/api/system/suspend` | POST | Suspende el equipo (con espera opcional, máximo 60 min; sin valor, ahora) |
-| `/api/windows/lock` | GET | Bloquea la sesión (`rundll32 user32.dll,LockWorkStation`) |
-| `/api/windows/unlock` | GET | **PELIGROSO**, ver sección 7 |
+| `/api/windows/lock` | POST | Bloquea la sesión (`rundll32 user32.dll,LockWorkStation`). GET → 405 |
+| `/api/windows/unlock` | — | Eliminado (cerraba la sesión con `shutdown /l`). GET → 404 |
 | `/api/forensic/processes` | GET | Procesos de mayor consumo (Top 10) |
 | `/api/forensic/logs` | GET | Log circular de eventos críticos |
 | `/ws/telemetry` | WebSocket | Telemetría cada 1,5 s (CPU, RAM, disco, uptime) |
