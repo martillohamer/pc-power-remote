@@ -4,7 +4,7 @@ chcp 65001 >nul 2>&1
 title Backend FastAPI - PC Power Remote
 
 REM ============================================================
-REM  pc-power-remote - inicio rápido del backend (Windows)
+REM  pc-power-remote - inicio rapido del backend (Windows)
 REM  - Crea el entorno virtual .venv si no existe
 REM  - Instala los requisitos si faltan
 REM  - Levanta uvicorn en 0.0.0.0:8000

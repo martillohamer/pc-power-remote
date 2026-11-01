@@ -1,12 +1,12 @@
 @echo off
 setlocal
 chcp 65001 >nul 2>&1
-title Frontend Vite — PC Power Remote
+title Frontend Vite - PC Power Remote
 
 REM ============================================================
-REM  pc-power-remote - inicio rápido del frontend (Windows)
+REM  pc-power-remote - inicio rapido del frontend (Windows)
 REM  - Instala dependencias npm si falta node_modules
-REM  - Levanta Vite en 0.0.0.0:5173 (accesible desde LAN/móvil)
+REM  - Levanta Vite en 0.0.0.0:5173 (accesible desde LAN/movil)
 REM ============================================================
 
 cd /d "%~dp0"
@@ -15,7 +15,7 @@ if not exist "node_modules" (
     echo [1/2] Instalando dependencias npm ...
     call npm install
     if errorlevel 1 (
-        echo [ERROR] Falló npm install. Verifica que Node.js esté en el PATH.
+        echo [ERROR] Fallo npm install. Verifica que Node.js este en el PATH.
         pause
         exit /b 1
     )
