@@ -12,6 +12,7 @@ export default defineConfig({
   server: {
     // host: true expone el dev server en la red local (util para probar desde el movil)
     host: true,
+    allowedHosts: ['.trycloudflare.com'],
     port: 5173,
     proxy: {
       // Evita CORS en desarrollo: /api/* se reenvia tal cual al backend FastAPI
