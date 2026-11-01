@@ -643,7 +643,7 @@ export default function App() {
         : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
 
   return (
-    <div className="relative min-h-full overflow-hidden">
+    <div className="relative min-h-full overflow-hidden pb-28">
       <div className="grid-bg pointer-events-none fixed inset-0" aria-hidden="true" />
       <div className="scanlines pointer-events-none fixed inset-0" aria-hidden="true" />
 
