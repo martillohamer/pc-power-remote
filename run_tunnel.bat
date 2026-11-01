@@ -5,27 +5,27 @@ title Cloudflare Tunnel - PC Power Remote
 
 REM ============================================================
 REM  pc-power-remote - run_tunnel.bat
-REM  Inicia un túnel Cloudflare Quick Tunnel hacia Vite (:5173)
-REM  (con proxy transparente al backend :8000 en /api y /ws)
+REM  Inicia un tunel Cloudflare Quick Tunnel hacia Vite
+REM  (con proxy transparente al backend en /api y /ws)
 REM ============================================================
 
 set "SCRIPT_DIR=%~dp0"
 set "CLOUDFLARED_EXE=%SCRIPT_DIR%cloudflared.exe"
-set "TARGET_PORT=5173"
+if "%~1"=="" (set "TARGET_PORT=5173") else (set "TARGET_PORT=%~1")
 set "LOG_DIR=%SCRIPT_DIR%.cloudflared"
 set "LOG_FILE=%LOG_DIR%\cloudflared.log"
 set "OUTPUT_FILE=%SCRIPT_DIR%tunnel_output.txt"
 
 echo.
 echo ============================================================
-echo   Iniciando túnel Cloudflare Quick Tunnel...
+echo   Iniciando tunel Cloudflare Quick Tunnel...
 echo ============================================================
 echo.
 
 REM --- 1. Validar binario cloudflared.exe ---
 if not exist "%CLOUDFLARED_EXE%" (
-    echo [ERROR] No se encontró cloudflared.exe en "%SCRIPT_DIR%".
-    echo Descárgalo desde: https://github.com/cloudflare/cloudflared/releases/latest
+    echo [ERROR] No se encontro cloudflared.exe en "%SCRIPT_DIR%".
+    echo Descargalo desde: https://github.com/cloudflare/cloudflared/releases/latest
     echo.
     pause
     exit /b 1
@@ -33,6 +33,9 @@ if not exist "%CLOUDFLARED_EXE%" (
 
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
 if exist "%OUTPUT_FILE%" del /f /q "%OUTPUT_FILE%" >nul 2>&1
+
+REM Borrar el log de cloudflared ANTES de lanzarlo para no leer URLs viejas
+if exist "%LOG_FILE%" del /f /q "%LOG_FILE%" >nul 2>&1
 
 REM Lanzar el detector de URL del tunel en segundo plano
 start "" /b powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tunnel_url.ps1"
@@ -48,7 +51,7 @@ REM cloudflared.exe tunnel --url http://127.0.0.1:PORT --no-autoupdate --logfile
 
 echo.
 echo ============================================================
-echo   El túnel Cloudflare se ha cerrado.
+echo   El tunel Cloudflare se ha cerrado.
 echo ============================================================
 echo.
 pause
