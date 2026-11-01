@@ -1,7 +1,7 @@
 @echo off
 setlocal
 chcp 65001 >nul 2>&1
-title Backend FastAPI — PC Power Remote
+title Backend FastAPI - PC Power Remote
 
 REM ============================================================
 REM  pc-power-remote - inicio rápido del backend (Windows)
@@ -47,7 +47,14 @@ if errorlevel 1 (
     echo [2/3] Dependencias ya instaladas.
 )
 
-set "LAN_IP=192.168.1.129"
+set "LAN_IP="
+for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /R /C:"IPv4"') do (
+    set "cand=%%a"
+    set "cand=%cand: =%"
+    echo %cand% | findstr /V /R /C:"169\.254\." >nul 2>&1
+    if errorlevel 0 if not defined LAN_IP set "LAN_IP=%cand%"
+)
+if not defined LAN_IP set "LAN_IP=localhost"
 
 echo.
 echo [3/3] Iniciando servidor en http://0.0.0.0:8000
