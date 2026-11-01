@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 const SUPPORTED = typeof window !== 'undefined' && !!(window.SpeechRecognition || window.webkitSpeechRecognition)
+const IS_SECURE = typeof window !== 'undefined' && !!window.isSecureContext
 const RECOGNITION_LANG = 'es-ES'
 
 const VOICE_COMMANDS = {
@@ -107,25 +108,33 @@ export default function VoiceCommandButton({ onCommand }) {
       </div>
       <button
         onClick={() => {
+          if (!IS_SECURE) {
+            setListeningStatus('permission-denied')
+            return
+          }
           if (!recording && !SUPPORTED) { setListeningStatus('unsupported'); return }
           setRecording(!recording)
-          if (recording && recRef.current) { recRef.current.start() }
+          if (recording && recRef.current) {
+            try { recRef.current.start() } catch { setListeningStatus('error') }
+          }
         }}
         className={buttonClass}
         aria-label='voz'
-        disabled={!SUPPORTED}
+        disabled={!SUPPORTED || !IS_SECURE}
       >
         MIC
       </button>
       {listeningStatus !== 'ready' && (
         <div className='mt-2 text-center text-sm'>
-          {listeningStatus === 'unsupported'
-            ? 'API no soportada'
-            : listeningStatus === 'permission-denied'
-              ? 'Permiso denegado'
-              : listeningStatus === 'unknown-command'
-                ? 'Comando no reconocido'
-                : 'Reconocido: ' + lastCommand}
+          {!IS_SECURE
+            ? 'Requiere HTTPS: abre la URL del tunel'
+            : listeningStatus === 'unsupported'
+              ? 'API no soportada'
+              : listeningStatus === 'permission-denied'
+                ? 'Permiso denegado'
+                : listeningStatus === 'unknown-command'
+                  ? 'Comando no reconocido'
+                  : 'Reconocido: ' + lastCommand}
         </div>
       )}
     </div>
