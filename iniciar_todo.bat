@@ -17,13 +17,13 @@ start "T-800 BACKEND" cmd /k "cd /d "%SCRIPT_DIR%backend" && call run_backend.ba
 timeout /t 2 /nobreak >nul
 
 echo [2/3] Arrancando Frontend (Vite)...
-start "T-800 FRONTEND" cmd /k "cd /d "%SCRIPT_DIR%frontend" && npm run dev -- --host 127.0.0.1 --port 5273 --strictPort"
+start "T-800 FRONTEND" cmd /k "cd /d "%SCRIPT_DIR%frontend" && npm run dev -- --host 0.0.0.0 --port 5173 --strictPort"
 
 timeout /t 2 /nobreak >nul
 
 echo [3/3] Arrancando Cloudflare Tunnel...
 if exist "%SCRIPT_DIR%cloudflared.exe" (
-    start "T-800 CLOUDFLARE TUNNEL" cmd /k "cd /d "%SCRIPT_DIR%" && call run_tunnel.bat 5273"
+    start "T-800 CLOUDFLARE TUNNEL" cmd /k "cd /d "%SCRIPT_DIR%" && call run_tunnel.bat 5173"
 ) else (
     echo [ADVERTENCIA] No se encontro cloudflared.exe en la raiz.
 )
@@ -33,7 +33,7 @@ echo ===================================================
 echo   SISTEMA T-800 DESPLEGADO
 echo ===================================================
 echo   - Backend Local  : http://localhost:8000
-echo   - Frontend Local : http://localhost:5273
+echo   - Frontend Local : http://localhost:5173
 echo   - Acceso Remoto  : Copia la URL de la ventana de Cloudflare
 echo ===================================================
 echo.
