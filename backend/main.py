@@ -362,10 +362,11 @@ def _ws_pin_ok(websocket: WebSocket, pin: str | None) -> bool:
 
 class ShutdownRequest(BaseModel):
     minutes: int = Field(
-        ge=1,
+        default=0,
+        ge=0,
         le=MAX_MINUTES,
-        description="Minutos de espera antes de apagar el equipo.",
-        examples=[15],
+        description="Minutos de espera antes de apagar el equipo (0 = inmediato).",
+        examples=[0, 15],
     )
 
 
@@ -583,10 +584,20 @@ def _run_shutdown(args: list[str]) -> None:
             detail=f"No se pudo ejecutar shutdown: {exc}",
         ) from exc
 
+    stdout_str = _decode(completed.stdout)
+    stderr_str = _decode(completed.stderr)
+    logger.info(
+        "Comando '%s' finalizado. returncode=%d, stdout=%r, stderr=%r",
+        " ".join(args),
+        completed.returncode,
+        stdout_str,
+        stderr_str,
+    )
+
     if completed.returncode == 0:
         return
 
-    message = _decode(completed.stderr) or _decode(completed.stdout)
+    message = stderr_str or stdout_str
 
     # 1116: no hay un apagado en curso que cancelar (Windows en es-PY).
     if completed.returncode == 1116:
@@ -628,15 +639,7 @@ def _read_pending() -> _PendingShutdown | None:
 # --- Reloj del countdown -----------------------------------------------------
 
 
-# --- Funciones auxiliares de logging ----------------------------------------
 
-def _log_forensic(event: str, details: str = "") -> None:
-    """Añade una entrada al log circular forense."""
-    entry = ForensicLogEntry(timestamp=datetime.now(timezone.utc).isoformat(), event=event, details=details)
-    _forensic_log.append(entry)
-    # Mantener solo los MAX_LOG_ENTRIES entradas
-    if len(_forensic_log) > MAX_LOG_ENTRIES:
-        _forensic_log.pop(0)
 
 
 # --- Guardian de energia -----------------------------------------------------
@@ -819,16 +822,41 @@ def power_state() -> PowerState:
     response_model=ShutdownScheduled,
     summary="Programa el apagado del equipo",
 )
-def schedule_shutdown(payload: ShutdownRequest) -> ShutdownScheduled:
-    seconds = payload.minutes * 60
+def schedule_shutdown(
+    payload: ShutdownRequest | None = None,
+) -> ShutdownScheduled:
+    minutes = payload.minutes if payload is not None else 0
+
+    if minutes == 0:
+        # Apagado inmediato sincrono (Terminator)
+        _run_shutdown(["shutdown", "/s", "/f", "/t", "0"])
+        _set_pending(None)
+        _log_forensic("shutdown_terminator", "Apagado inmediato Terminator ejecutado")
+        logger.info("Apagado inmediato Terminator ejecutado (shutdown /s /f /t 0)")
+        now_iso = datetime.now(timezone.utc).isoformat()
+        return ShutdownScheduled(
+            minutes=0,
+            seconds=0,
+            ends_at=now_iso,
+        )
+
+    # Si es mayor que 0: abortar apagado previo ignorando 409 para evitar error 1190
+    try:
+        _run_shutdown(["shutdown", "/a"])
+    except HTTPException as exc:
+        if exc.status_code != 409:
+            raise
+
+    seconds = minutes * 60
     _run_shutdown(["shutdown", "/s", "/t", str(seconds)])
 
     ends_at = datetime.now(timezone.utc) + timedelta(seconds=seconds)
-    _set_pending(_PendingShutdown(ends_at=ends_at, minutes=payload.minutes))
+    _set_pending(_PendingShutdown(ends_at=ends_at, minutes=minutes))
+    _log_forensic("shutdown_scheduled", f"Apagado programado en {minutes} min")
 
-    logger.info("Apagado programado en %s min (ends_at=%s)", payload.minutes, ends_at)
+    logger.info("Apagado programado en %s min (ends_at=%s)", minutes, ends_at)
     return ShutdownScheduled(
-        minutes=payload.minutes,
+        minutes=minutes,
         seconds=seconds,
         ends_at=ends_at.isoformat(),
     )
@@ -841,23 +869,36 @@ def schedule_shutdown(payload: ShutdownRequest) -> ShutdownScheduled:
     summary="Cancela un apagado programado",
 )
 def cancel_shutdown() -> ShutdownCancelled:
+    """Cancela cualquier apagado programado mediante shutdown /a.
+
+    Nota de limitación: un apagado ejecutado con /t 0 (inmediato/Terminator)
+    no puede ser cancelado por Windows. Solo los apagados con temporizador
+    (/t > 0) son cancelables.
+    """
     try:
         # Ejecutar shutdown /a para abortar cualquier apagado programado
-        # Este comando solo funciona si hay un apagado en curso; si no, devuelve error 409 que ignoramos
         _run_shutdown(["shutdown", "/a"])
     except HTTPException as exc:
-        # Si el SO dice que no habia nada programado, el estado local esta obsoleto.
+        # 1116 (mapeado a 409 en _run_shutdown): no habia ningun apagado en curso
         if exc.status_code == 409:
             _set_pending(None)
-        else:
-            # Cualquier otro error lo propagamos
-            raise
+            logger.info("Cancelación solicitada pero no había apagado pendiente en Windows (1116)")
+            return ShutdownCancelled(
+                ok=True,
+                message="No había apagado pendiente para cancelar.",
+            )
+        # Cualquier otro error lo propagamos
+        raise
 
     # Limpiar estado local del temporizador de apagado para reflejar en la UI
     _set_pending(None)
+    _log_forensic("shutdown_cancelled", "Apagado programado cancelado")
 
     logger.info("Apagado cancelado y estado local limpiado")
-    return ShutdownCancelled(message="Apagado cancelado. El temporizador fue abortado. El equipo sigue encendido.")
+    return ShutdownCancelled(
+        ok=True,
+        message="Apagado cancelado. El temporizador fue abortado. El equipo sigue encendido.",
+    )
 
 
 # --- Endpoints de Control de Sesión Windows ---
