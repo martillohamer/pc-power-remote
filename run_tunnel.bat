@@ -1,7 +1,7 @@
 @echo off
 setlocal
 chcp 65001 >nul 2>&1
-title Cloudflare Tunnel — PC Power Remote
+title Cloudflare Tunnel - PC Power Remote
 
 REM ============================================================
 REM  pc-power-remote - run_tunnel.bat
@@ -34,15 +34,17 @@ if not exist "%CLOUDFLARED_EXE%" (
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
 if exist "%OUTPUT_FILE%" del /f /q "%OUTPUT_FILE%" >nul 2>&1
 
-echo Exponiendo http://localhost:%TARGET_PORT% a Internet...
-echo (La URL pública aparecerá a continuación sin filtros que bloqueen la consola)
+REM Lanzar el detector de URL del tunel en segundo plano
+start "" /b powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tunnel_url.ps1"
+
+echo Exponiendo http://127.0.0.1:%TARGET_PORT% a Internet...
+echo (La URL publica aparecera en la ventana del detector de URL)
 echo.
 
 REM --- 2. Ejecutar cloudflared de forma limpia ---
 REM La sintaxis correcta para Quick Tunnel es:
-REM cloudflared.exe tunnel --url http://localhost:PORT --logfile PATH
-REM y redirigir stderr a stdout para visualización y logging.
-"%CLOUDFLARED_EXE%" tunnel --url http://localhost:%TARGET_PORT% --logfile "%LOG_FILE%"
+REM cloudflared.exe tunnel --url http://127.0.0.1:PORT --no-autoupdate --logfile PATH
+"%CLOUDFLARED_EXE%" tunnel --url http://127.0.0.1:%TARGET_PORT% --no-autoupdate --logfile "%LOG_FILE%"
 
 echo.
 echo ============================================================
