@@ -11,9 +11,9 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     // host: true expone el dev server en la red local (util para probar desde el movil)
-    host: true,
+    host: process.env.VITE_HOST ?? true,
     allowedHosts: ['.trycloudflare.com'],
-    port: 5173,
+    port: process.env.VITE_PORT ? parseInt(process.env.VITE_PORT) : 5173,
     proxy: {
       // Evita CORS en desarrollo: /api/* se reenvia tal cual al backend FastAPI
       // (el backend ya expone sus rutas bajo /api, sin reescritura).
