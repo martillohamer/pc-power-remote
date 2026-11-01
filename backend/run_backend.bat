@@ -1,14 +1,22 @@
 @echo off
 setlocal
+chcp 65001 >nul 2>&1
+title Backend FastAPI — PC Power Remote
 
 REM ============================================================
-REM  pc-power-remote - inicio rapido del backend (Windows)
+REM  pc-power-remote - inicio rápido del backend (Windows)
 REM  - Crea el entorno virtual .venv si no existe
 REM  - Instala los requisitos si faltan
-REM  - Levanta uvicorn en 0.0.0.0:8000 (accesible desde el movil)
+REM  - Levanta uvicorn en 0.0.0.0:8000
+REM  - Uso: run_backend.bat [dev|prod]
 REM ============================================================
 
 cd /d "%~dp0"
+
+set "MODE=%~1"
+if "%MODE%"=="" set "MODE=%APP_MODE%"
+if "%MODE%"=="" set "MODE=%APP_ENV%"
+if "%MODE%"=="" set "MODE=dev"
 
 if not exist ".venv\Scripts\python.exe" (
     echo [1/3] Creando entorno virtual .venv ...
@@ -39,27 +47,29 @@ if errorlevel 1 (
     echo [2/3] Dependencias ya instaladas.
 )
 
-REM Detectar la IP local (IPv4), ignorando adaptadores APIPA (169.254.x).
-set "LAN_IP="
-for /f "tokens=2 delims=:" %%i in ('ipconfig ^| findstr /c:"IPv4" ^| findstr /v "169.254"') do set "LAN_IP=%%i"
-if defined LAN_IP set "LAN_IP=%LAN_IP: =%"
-if not defined LAN_IP set "LAN_IP=IP_DE_TU_PC"
+set "LAN_IP=192.168.1.129"
 
 echo.
 echo [3/3] Iniciando servidor en http://0.0.0.0:8000
-echo       IP local:  %LAN_IP%
-echo       Backend:   http://%LAN_IP%:8000
-echo       Docs:      http://%LAN_IP%:8000/docs
-echo       Frontend:  http://%LAN_IP%:5173  (run_frontend.bat)
+echo       Entorno:   %MODE%
+echo       Local:     http://localhost:8000
+echo       Docs:      http://localhost:8000/docs
+echo       Red Local: http://%LAN_IP%:8000
 if "%APP_PIN%"=="" (
-    echo       PIN:       134113 por defecto - define APP_PIN para cambiarlo
+    echo       PIN:       134113 por defecto
 ) else (
-    echo       PIN:       tomado de la variable APP_PIN
+    echo       PIN:       definido por variable APP_PIN
 )
-if "%APP_DRY_RUN%"=="1" echo       MODO:      APP_DRY_RUN activo - no se apaga el equipo
+if "%APP_DRY_RUN%"=="1" echo       MODO:      APP_DRY_RUN activo - simulacion
 echo.
 
-"%PY%" -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+if /i "%MODE%"=="prod" (
+    echo Iniciando uvicorn en modo PRODUCCION (sin --reload)...
+    "%PY%" -m uvicorn main:app --host 0.0.0.0 --port 8000
+) else (
+    echo Iniciando uvicorn en modo DESARROLLO (--reload en *.py)...
+    "%PY%" -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload --reload-dir . --reload-include "*.py"
+)
 
 endlocal
 pause
