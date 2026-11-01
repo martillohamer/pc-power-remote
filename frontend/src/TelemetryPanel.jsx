@@ -106,7 +106,9 @@ export default function TelemetryPanel({ pin, onAuthError }) {
       socket.onmessage = (event) => {
         if (!active) return
         try {
-          setTelemetry(JSON.parse(event.data))
+          const payload = JSON.parse(event.data)
+          if (!payload || payload.error) return
+          setTelemetry(payload)
         } catch {
           // Frame corrupto: se ignora y se espera la siguiente muestra.
         }

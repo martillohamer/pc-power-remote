@@ -1095,8 +1095,21 @@ async def telemetry_socket(
     logger.info("Telemetria: cliente conectado (%s)", websocket.client)
     try:
         while True:
-            payload = await asyncio.to_thread(collect_telemetry)
-            await websocket.send_json(payload.model_dump())
+            try:
+                payload = await asyncio.to_thread(collect_telemetry)
+                await websocket.send_json(payload.model_dump())
+            except WebSocketDisconnect:
+                raise
+            except Exception as exc:
+                logger.exception("Error al recolectar telemetria: %s", exc)
+                try:
+                    await websocket.send_json({"error": str(exc)})
+                except WebSocketDisconnect:
+                    raise
+                except Exception as send_err:
+                    logger.warning("Fallo al enviar frame de error por WebSocket: %s", send_err)
+                    raise
+
             await asyncio.sleep(max(0.1, TELEMETRY_INTERVAL - CPU_SAMPLE_SECONDS))
     except WebSocketDisconnect:
         logger.info("Telemetria: cliente desconectado")
@@ -1106,5 +1119,5 @@ async def telemetry_socket(
     finally:
         try:
             await websocket.close()
-        except RuntimeError:
+        except (RuntimeError, OSError):
             pass

@@ -3,7 +3,7 @@
 ## 1. Fase Actual
 - **Fase**: FASE 1: BACKEND DE APAGADO (Completada). Sistema detenido tras completar Fase 0 y Fase 1 según la orden del usuario.
 - **Rama**: `fix/t800-estabilizacion`
-- **Último comando probado**: `backend\.venv\Scripts\pytest backend\tests -v` (15 tests pasados, 0 fallos).
+- **Último comando probado**: `backend\.venv\Scripts\pytest backend\tests -v` (18 tests pasados, 0 fallos).
 
 ---
 
@@ -16,8 +16,8 @@
 | 3 | Túnel: `run` en quick tunnel, sintaxis batch errónea (`usebacktokens`, etc.) | **VIGENTE (Pendiente Fase 4)** | `run_tunnel.bat` e `iniciar_todo.bat` presentan comandos con sintaxis rota o parámetros obsoletos. Requiere reescritura limpia con `tunnel_url.ps1`. |
 | 4 | Lanzadores: `/WANAKA`, healthcheck a `/health` en vez de `/api/health`, scripts redundantes | **VIGENTE (Pendiente Fase 4)** | `iniciar_todo.bat` tiene `/WANAKA` y apuntaba a `/health` (404). `click_apagadoeinico.bat` y `backend/fix.py` (vacío) requieren saneamiento. |
 | 5 | Panel Forense: barras 100%, span absolute desubicado, tabla desborda en móvil, clase `transition-width` | **VIGENTE (Pendiente Fase 3)** | Div exterior tiene `bg-emerald-500` sin ancho (se muestra al 100%); span con `absolute` sin padre `relative` vuela a la derecha; tabla con `min-w-[600px]` sin scroll horizontal; clase inválida `transition-width`. |
-| 6 | Forense CPU: ordenamiento `cpu_percent + memory_mb`, primera lectura psutil devuelve 0.0 | **VIGENTE (Pendiente Fase 2)** | `forensic_processes()` suma porcentaje y megabytes, distorsionando el orden; falta primar con lectura inicial y retardo de ~0.3s. |
-| 7 | Telemetría: "RECONNECTING" en móvil, fallo en `collect_telemetry` mata WS | **VIGENTE (Pendiente Fase 2)** | Comprobado con TestClient: una excepción en `collect_telemetry` desconecta el socket (`WebSocketDisconnect`) en vez de capturar el error y seguir enviando muestras. |
+| 6 | Forense CPU: ordenamiento `cpu_percent + memory_mb`, primera lectura psutil devuelve 0.0 | **RESUELTO (Fase 2)** | Primado con `proc.cpu_percent(None)`, pausa de 0.3s y segunda lectura real; tope en `100 * cores`; orden descendente por `(cpu_percent, memory_mb)`. |
+| 7 | Telemetría: "RECONNECTING" en móvil, fallo en `collect_telemetry` mata WS | **RESUELTO (Fase 2)** | Telemetría robusta: `try/except` por muestra, logging de excepción y envío de `{"error": ...}` sin cerrar socket; cliente ignora frames de error en `TelemetryPanel.jsx`. |
 | 8 | Botón MIC: solapamiento en móvil, contexto inseguro en HTTP | **VIGENTE (Pendiente Fase 3)** | Sin padding inferior suficiente (`pb-28`) en móvil; falta validación `window.isSecureContext` para advertir sobre requerimiento HTTPS. |
 | 9 | Seguridad: PIN por defecto en repo, sin rate-limiting, PIN en query string WS, binario 55MB en git | **VIGENTE (Pendiente Fase 5)** | `APP_PIN=134113` documentado públicamente; sin bloqueo ante fuerza bruta; PIN expuesto en URL del WebSocket; `cloudflared.exe` versionado en git. |
 | 10 | Encender PC (WOL): botón envía paquete desde el propio PC encendido | **VIGENTE (Pendiente Fase 6)** | Solo funciona si el PC ya está despierto. Para arranque remoto se necesita relé auxiliar independiente. |
@@ -70,7 +70,7 @@ WebSocket crashed with exception: <class 'starlette.websockets.WebSocketDisconne
 
 - [ ] **Fase 2: Backend Forense y Telemetría**
   - [x] T2.1: `forensic_processes()`: primado con `proc.cpu_percent(None)`, espera de 0.3s y segunda lectura real; tope en `100 * cores`; orden descendente por `(cpu_percent, memory_mb)`; límite de 10 procesos. (Tests: 5/5 pasando).
-  - [ ] T2.2: Telemetría robusta en WebSocket (`try/except` por muestra, logging de excepción, envío de frame `{"error": ...}`, reintento sin cerrar el socket) y filtro de errores en `TelemetryPanel.jsx`.
+  - [x] T2.2: Telemetría robusta en WebSocket (`try/except` por muestra, logging con `logger.exception`, frame `{"error": ...}`, reintento continuo sin cerrar canal) y filtro en `TelemetryPanel.jsx` (ignora frames con clave "error"). (Tests: 3/3 pasando).
   - [ ] T2.3: Control de reinicios en `run_backend.bat` (`--reload` solo en dev con `--reload-dir backend --reload-include "*.py"`, sin reload en prod).
 - [ ] **Fase 3: Frontend** (Pendiente)
 - [ ] **Fase 4: Túnel y Lanzadores** (Pendiente)
