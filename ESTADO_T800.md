@@ -1,16 +1,20 @@
 # ESTADO_T800.md — Registro de Auditoría y Estado del Sistema
 
 ## 1. Fase Actual
-- **Fase**: FASE 3A: FRONTEND Y LANZADORES (Completada en esta sesión).
+- **Fase**: FASE 3B: VERIFICACION AUTOMATICA (Completada en esta sesión).
 - **Rama**: `fix/t800-estabilizacion`
-- **Último comando probado**: `backend\.venv\Scripts\pytest backend\tests -v` (21 tests pasados, 0 fallos).
+- **Último comando probado**: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verificar_t800.ps1` (27 PASS, 4 FAIL, 1 WARN, salida de codigo 4).
 - **Últimos commits (esta sesión)**:
-  - `8d9f587` feat(voz): confirma apagar terminator antes de ejecutar (FASE 3A-T1). El comando de voz 'terminator' exige window.confirm igual que el boton.
-  - `d017ae4` feat(vite): permite hosts trycloudflare.com en dev server (FASE 3A-T2). Se añade server.allowedHosts: ['.trycloudflare.com'].
-  - `be54e27` feat(lanzadores): backend via run_backend.bat dev, IP dinamica y sin ascii extendido (FASE 3A-T3).
-  - `802d542` feat(tunel): tunnel_url.ps1 detecta URL trycloudflare y run_tunnel.bat usa 127.0.0.1 (FASE 3A-T4).
+  - `06e96cd` feat(test): websockets en requirements-dev y VITE_HOST/VITE_PORT en vite.config.js.
+  - `d865988` fix(scripts): elimina caracteres no ASCII y findstr de .bat.
+  - `7cd077b` test(frontend): comprobaciones estaticas E6 y E7 en pytest.
+  - `e8ab8e6` feat(test): scripts de verificacion automatica (ws_check.py, verificar_t800.ps1).
+  - `d30a3b8` docs: anade PROMPT_T800.md.
   - `7ccb3f6` feat(launcher): corrige `--reload-dir` en `run_backend.bat` y añade test (T2.3).
   - `16c4a9b` chore(repo): añade `.gitattributes` con `*.bat text eol=crlf` y aplica `git add --renormalize .`.
+  - `8d9f587` feat(voz): confirma apagar terminator antes de ejecutar (FASE 3A-T1).
+  - `be54e27` feat(lanzadores): backend via run_backend.bat dev, IP dinamica y sin ascii extendido (FASE 3A-T3).
+  - `802d542` feat(tunel): tunnel_url.ps1 detecta URL trycloudflare y run_tunnel.bat usa 127.0.0.1 (FASE 3A-T4).
 
 ---
 
@@ -87,10 +91,40 @@ WebSocket crashed with exception: <class 'starlette.websockets.WebSocketDisconne
   - [x] T3: iniciar_todo.bat llama a `call run_backend.bat dev`; IP fija 192.168.1.129 eliminada con deteccion dinamica de IPv4 (ignorando 169.254.x); sin caracteres no ASCII en .bat. run_tunnel.bat se invoca desde iniciar_todo.bat. Commit `be54e27`.
   - [x] T4: tunnel_url.ps1 (espera hasta 40s a .cloudflared\cloudflared.log, Select-String con regex trycloudflare.com, imprime y copia al portapapeles); run_tunnel.bat lanza el powershell antes de cloudflared, usa 127.0.0.1 y --no-autoupdate, sin find/findstr. Tests en test_launcher.py. Commit `802d542`.
 
-- [ ] **Fase 4: Túnel y Lanzadores** (Pendiente - resto)
+- [x] **FASE 3B: Verificacion Automatica** (Completada en esta sesión, resultado: 27 PASS, 4 FAIL, 1 WARN, salida de codigo 4)
+  - Scripts creados: `scripts/ws_check.py`, `scripts/verificar_t800.ps1`, `backend/tests/test_frontend_static.py`
+  - Estaticas E1-E8: 8/8 PASS
+  - Backend vivo B0-B8: 9/9 PASS
+  - Frontend vivo F0-F4: 4/5 PASS (F4 PASS con WARN en host evil.example.com)
+  - Tunel real T1-T6: T1 PASS, T2-T4 FAIL (no hay red HTTP externa desde PowerShell), T5 PASS, T6 WARN
+  - Integridad I1-I3: I1 PASS, I2 FAIL (puertos en uso durante check antes del cleanup), I3 PASS
+  - Commit `e8ab8e6`.
+
+- [ ] **Fase 4: Túnel y Lanzadores** (Pendiente - revisar T2-T4 del túnel sin red externa)
 - [ ] **Fase 5: Seguridad** (Pendiente)
 - [ ] **Fase 6: Relé de Encendido (WOL)** (Pendiente)
 - [ ] **Fase 7: Verificación E2E, Docs y PR** (Pendiente)
+
+## 6. Resultado de la Verificacion Automatica (FASE 3B)
+Ejecutado con: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verificar_t800.ps1`
+Resultado: **27 PASS, 4 FAIL, 1 WARN, 0 BLOQUEO, salida de codigo 4**
+
+**FAIL:**
+- T2: Tunel GET <URL>/api/health -> 200 (no hay red HTTP externa desde PowerShell)
+- T3: Tunel GET <URL>/ -> 200 y id='root' (misma limitacion de red)
+- T4: Tunel GET <URL>/api/state (misma limitacion de red)
+- I2: Puertos 8100/5273 en uso durante el check (se ejecuta antes del cleanup en finally)
+
+**WARN:**
+- T6: No se pudo terminar el PID del tunel (taskkill /T /F)
+- F4-negativo: Host evil.example.com bloqueado (esperado, no es error)
+
+**No ejecutado (requiere movil real, apagado real, WOL real, micrófono en movil):**
+- Apagado inmediato/terminator real desde el movil
+- Cancelar apagado desde el movil real
+- Wake-on-LAN real
+- Microfono en contexto no seguro en el movil
+- Acceso por datos moviles (no Wi-Fi) al tunel
 
 ---
 

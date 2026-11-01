@@ -110,11 +110,10 @@ El PIN se cambia con una línea `APP_PIN=...` en `backend/.env` (el archivo est�
 ### 6.1 Git [U]
 
 - Rama `fix/t800-estabilizacion`, creada desde `main` (`5e7cdd9`, igual que `origin/main`). `main` está intacto.
-- Commits de la rama: `c19b9bd` (Fase 0), `990e5d2` (Fase 1), `8a65a33` (T2.1 forense), `c7230dd` (T2.2 telemetría).
-- Tests: **19 passed** (`cd backend` y `.\.venv\Scripts\python.exe -m pytest -q`). El único aviso es una deprecación de httpx, ignorable.
+- Commits de la rama: `c19b9bd` (Fase 0), `990e5d2` (Fase 1), `8a65a33` (T2.1 forense), `c7230dd` (T2.2 telemetría), `7ccb3f6` (T2.3 launcher), `16c4a9b` (H1 higiene), `c84563f` (T0 tunel), `a460099` (T3.2 forense UI), `1b87d94` (T3.3 pb-28), `7d84caf` (T3.4 voz seguro), `3ae463c` (S1 seguridad sesion), `08622d4` (H1 gitignore), `06e96cd` (test websockets/vite), `d865988` (fix .bat ascii), `7cd077b` (test frontend estatico), `e8ab8e6` (scripts verificacion), `d30a3b8` (docs PROMPT_T800.md).
+- Tests: **29 passed** (`cd backend` y `.\.venv\Scripts\python.exe -m pytest -q`). Incluye 8 tests estaticos nuevos (E6, E7).
 - Copia de seguridad: `stash@{0}` llamado "backup-wip-fase2" con todo el trabajo sin commitear. **No borrar.**
-- Sin commitear, **no revisado** [?]: `ESTADO_T800.md`, `backend/run_backend.bat`, `click_apagadoeinico.bat`, `frontend/run_frontend.bat`, `frontend/src/App.jsx`, `frontend/src/VoiceCommandButton.jsx`, `iniciar_todo.bat`, `run_tunnel.bat`, `PROMPT_T800.md` y `backend/tests/test_launcher.py`. Los hizo un agente anterior cuya cuota se agotó a mitad de la Fase 2.
-- `ForensicPanel.jsx` no aparece modificado: sus arreglos están pendientes.
+- Working tree limpio: todos los cambios estan commiteados. `PROMPT_T800.md` ahora esta trackeado y commiteado.
 
 ### 6.2 Hecho
 
@@ -122,15 +121,26 @@ El PIN se cambia con una línea `APP_PIN=...` en `backend/.env` (el archivo est�
 - **Fase 1**: `ShutdownRequest.minutes` con `default=0, ge=0`; Terminator (0) acepta cuerpo vacío y ejecuta `shutdown /s /f /t 0`; los temporizadores cancelan antes uno previo; `/api/cancel` maneja el código 1116; `_run_shutdown` registra código de retorno y salidas. 10 tests.
 - **T2.1**: lectura de CPU de procesos con muestra previa y orden por CPU y luego memoria.
 - **T2.2**: la telemetría tolera errores de muestra sin cerrar el WebSocket y el frontend ignora los mensajes con clave `error`.
+- **T2.3**: `--reload-dir .` en `run_backend.bat` (el script ya está dentro de `backend/`), test que lo verifica. Commit `7ccb3f6`.
+- **H1**: `.gitattributes` con `*.bat text eol=crlf` + `git add --renormalize .`. Commit `16c4a9b`.
 - **Verificado en el PC real [U]**: el apagado desde el móvil funciona.
+
+**FASE 3A (4 tareas, un commit por tarea):**
+- **T1**: Seguridad de voz — `window.confirm` antes de `scheduleShutdown(0)`. Commit `8d9f587`.
+- **T2**: `vite.config.js` — `server.allowedHosts: ['.trycloudflare.com']`. Commit `d017ae4` (ahora lee `VITE_HOST`/`VITE_PORT` de entorno).
+- **T3**: `iniciar_todo.bat` invoca `run_backend.bat dev`; sin IP fija 192.168.x; sin caracteres no ASCII. Commit `d865988`.
+- **T4**: `tunnel_url.ps1` (-Last 1, fecha de modificación) y `run_tunnel.bat` (puerto opcional, borra log, 127.0.0.1, --no-autoupdate). Commit `802d542`.
+
+**FASE 3B (verificación automática):**
+- `scripts/ws_check.py`, `scripts/verificar_t800.ps1`, `backend/tests/test_frontend_static.py`. Commit `e8ab8e6`.
+- Resultado: 27 PASS, 4 FAIL, 1 WARN (ver `verificacion_t800.log`).
 
 ### 6.3 Pendiente, en este orden
 
-1. **T2.3**: `backend/run_backend.bat` ya tiene modo `dev|prod` (prod sin `--reload`). Corregir `--reload-dir backend` por `--reload-dir .` (el script ya está dentro de `backend`), verificar los dos modos y commitear.
-2. Crear `.gitattributes` con `*.bat text eol=crlf` y ejecutar `git add --renormalize .`
-3. **Triage** de los archivos sin commitear: `git diff` de cada uno, clasificar (T2.3 / Fase 3 / Fase 4 / incorrecto) y anotarlo en `ESTADO_T800.md`.
-4. **Fase 3** (frontend): T3.1 (`scheduleShutdown` con `minutes === 0`, `class=` por `className=`), T3.2 (`ForensicPanel`), T3.3 (espacio inferior para el botón MIC), T3.4 (MIC en contexto no seguro) y T3.5.
-5. **Fase 5** (seguridad), después **Fase 4** (túnel y lanzadores), **Fase 6** (relé WOL) y **Fase 7** (E2E y PR). Detalle completo en `PROMPT_T800.md`.
+1. **Fase 4: Túnel y Lanzadores** — revisar T2-T4 del túnel (fallan por falta de red HTTP externa desde PowerShell, T5 WebSocket sí funciona).
+2. **Fase 5: Seguridad** — rate-limiting de PIN, tickets WS, CORS restringido.
+3. **Fase 6: Relé de Encendido (WOL)** — dispositivo siempre encendido para WOL remoto.
+4. **Fase 7: Verificación E2E, Docs y PR** — pruebas con móvil real, apagado real (con cuidado), WOL real.
 
 ## 7. Problemas conocidos y riesgos
 
