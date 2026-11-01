@@ -1,12 +1,16 @@
 # ESTADO_T800.md — Registro de Auditoría y Estado del Sistema
 
 ## 1. Fase Actual
-- **Fase**: FASE 2: BACKEND FORENSE Y TELEMETRÍA (Completada). Sistema detenido tras completar Fase 2 según la orden del usuario.
+- **Fase**: FASE 3A: FRONTEND Y LANZADORES (Completada en esta sesión).
 - **Rama**: `fix/t800-estabilizacion`
-- **Último comando probado**: `backend\.venv\Scripts\pytest backend\tests -v` (19 tests pasados, 0 fallos).
+- **Último comando probado**: `backend\.venv\Scripts\pytest backend\tests -v` (21 tests pasados, 0 fallos).
 - **Últimos commits (esta sesión)**:
-  - `7ccb3f6` feat(launcher): corrige `--reload-dir` en `run_backend.bat` y añade test (T2.3). El script ya está dentro de `backend/` (`cd /d "%~dp0"`), por lo que `--reload-dir backend` apuntaba a un directorio inexistente; se cambia por `--reload-dir .` (UTF-8 sin BOM, CRLF). Test actualizado para verificar `--reload-dir .` y rechazar la ruta obsoleta.
-  - `16c4a9b` chore(repo): añade `.gitattributes` con `*.bat text eol=crlf` y aplica `git add --renormalize .` para normalizar finales de línea CRLF en los scripts de Windows.
+  - `8d9f587` feat(voz): confirma apagar terminator antes de ejecutar (FASE 3A-T1). El comando de voz 'terminator' exige window.confirm igual que el boton.
+  - `d017ae4` feat(vite): permite hosts trycloudflare.com en dev server (FASE 3A-T2). Se añade server.allowedHosts: ['.trycloudflare.com'].
+  - `be54e27` feat(lanzadores): backend via run_backend.bat dev, IP dinamica y sin ascii extendido (FASE 3A-T3).
+  - `802d542` feat(tunel): tunnel_url.ps1 detecta URL trycloudflare y run_tunnel.bat usa 127.0.0.1 (FASE 3A-T4).
+  - `7ccb3f6` feat(launcher): corrige `--reload-dir` en `run_backend.bat` y añade test (T2.3).
+  - `16c4a9b` chore(repo): añade `.gitattributes` con `*.bat text eol=crlf` y aplica `git add --renormalize .`.
 
 ---
 
@@ -76,8 +80,14 @@ WebSocket crashed with exception: <class 'starlette.websockets.WebSocketDisconne
   - [x] T2.2: Telemetría robusta en WebSocket (`try/except` por muestra, logging con `logger.exception`, frame `{"error": ...}`, reintento continuo sin cerrar canal) y filtro en `TelemetryPanel.jsx` (ignora frames con clave "error"). (Tests: 3/3 pasando).
   - [x] T2.3: Control de reinicios en `run_backend.bat` (`--reload` solo en dev con `--reload-dir . --reload-include "*.py"`, sin reload en prod). El script hace `cd /d "%~dp0"` (queda dentro de `backend/`), por lo que `--reload-dir .` es el directorio correcto. Test en `backend/tests/test_launcher.py` que lo verifica y rechaza `--reload-dir backend`. Commit `7ccb3f6`.
 - [x] Higiene de reposo: `.gitattributes` con `*.bat text eol=crlf` + `git add --renormalize .` (UTF-8 sin BOM, CRLF). Commit `16c4a9b`.
-- [ ] **Fase 3: Frontend** (Pendiente)
-- [ ] **Fase 4: Túnel y Lanzadores** (Pendiente)
+
+- [x] **FASE 3A: Frontend y Lanzadores** (Completada en esta sesión, 4 tareas, un commit por tarea)
+  - [x] T1: Seguridad de voz — comando 'terminator' exige window.confirm antes de scheduleShutdown(0). Commit `8d9f587`.
+  - [x] T2: vite.config.js — server.allowedHosts: ['.trycloudflare.com'] con host:true y proxy actual. Commit `d017ae4`.
+  - [x] T3: iniciar_todo.bat llama a `call run_backend.bat dev`; IP fija 192.168.1.129 eliminada con deteccion dinamica de IPv4 (ignorando 169.254.x); sin caracteres no ASCII en .bat. run_tunnel.bat se invoca desde iniciar_todo.bat. Commit `be54e27`.
+  - [x] T4: tunnel_url.ps1 (espera hasta 40s a .cloudflared\cloudflared.log, Select-String con regex trycloudflare.com, imprime y copia al portapapeles); run_tunnel.bat lanza el powershell antes de cloudflared, usa 127.0.0.1 y --no-autoupdate, sin find/findstr. Tests en test_launcher.py. Commit `802d542`.
+
+- [ ] **Fase 4: Túnel y Lanzadores** (Pendiente - resto)
 - [ ] **Fase 5: Seguridad** (Pendiente)
 - [ ] **Fase 6: Relé de Encendido (WOL)** (Pendiente)
 - [ ] **Fase 7: Verificación E2E, Docs y PR** (Pendiente)
