@@ -495,29 +495,49 @@ def forensic_processes() -> list[ForensicProcessInfo]:
     Solo está disponible cuando el PIN se proporciona en la cabecera X-App-Pin.
     """
     try:
-        processes = []
-        for proc in psutil.process_iter(["pid", "name", "cpu_percent", "memory_info", "status"]):
+        candidate_procs = []
+        for proc in psutil.process_iter(["pid", "name", "memory_info", "status"]):
             try:
                 info = proc.info
-                if info.get("name") in (None, "System Idle Process", "System"):
+                name = info.get("name")
+                if name in (None, "System Idle Process", "System"):
                     continue
+                # Primera pasada: primar medición de CPU
+                proc.cpu_percent(None)
+                candidate_procs.append(proc)
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+
+        # Esperar ~0.3 s entre primera y segunda pasada para obtener muestra real
+        time.sleep(0.3)
+
+        num_cores = psutil.cpu_count() or 1
+        max_cpu = 100.0 * num_cores
+
+        processes: list[ForensicProcessInfo] = []
+        for proc in candidate_procs:
+            try:
+                info = proc.info
+                raw_cpu = proc.cpu_percent(None)
+                cpu_percent = round(min(max(0.0, float(raw_cpu)), max_cpu), 1)
                 memory_mb = 0.0
                 if info.get("memory_info"):
                     memory_mb = round(float(info["memory_info"].rss) / (1024 * 1024), 1)
+
                 processes.append(
-                    {
-                        "pid": info["pid"],
-                        "name": info["name"],
-                        "cpu_percent": round(float(info.get("cpu_percent", 0)), 1),
-                        "memory_mb": memory_mb,
-                        "status": info.get("status", "unknown"),
-                    }
+                    ForensicProcessInfo(
+                        pid=info["pid"],
+                        name=info["name"],
+                        cpu_percent=cpu_percent,
+                        memory_mb=memory_mb,
+                        status=info.get("status") or "unknown",
+                    )
                 )
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue
 
-        # Ordenar por consumo combinado de CPU + memoria (mayor primero)
-        processes.sort(key=lambda p: (p["cpu_percent"] or 0) + (p["memory_mb"] or 0), reverse=True)
+        # Ordenar por (cpu_percent, memory_mb) descendente
+        processes.sort(key=lambda p: (p.cpu_percent, p.memory_mb), reverse=True)
 
         # Retornar solo los top 10
         return processes[:10]

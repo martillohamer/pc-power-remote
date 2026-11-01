@@ -3,7 +3,7 @@
 ## 1. Fase Actual
 - **Fase**: FASE 1: BACKEND DE APAGADO (Completada). Sistema detenido tras completar Fase 0 y Fase 1 según la orden del usuario.
 - **Rama**: `fix/t800-estabilizacion`
-- **Último comando probado**: `backend\.venv\Scripts\pytest backend\tests\test_shutdown.py -v` (10 tests pasados, 0 fallos).
+- **Último comando probado**: `backend\.venv\Scripts\pytest backend\tests -v` (15 tests pasados, 0 fallos).
 
 ---
 
@@ -68,7 +68,10 @@ WebSocket crashed with exception: <class 'starlette.websockets.WebSocketDisconne
   - [x] T1.2: `/api/cancel`: registro en log de returncode, stdout y stderr; 1116 mapeado a respuesta clara ("No había apagado pendiente para cancelar.") con estado local limpio. Documentada limitación de `/t 0`.
   - [x] Tests Fase 1 (TDD verde): 10 tests unitarios en `backend/tests/test_shutdown.py` pasando al 100%.
 
-- [ ] **Fase 2: Backend Forense y Telemetría** (Pendiente)
+- [ ] **Fase 2: Backend Forense y Telemetría**
+  - [x] T2.1: `forensic_processes()`: primado con `proc.cpu_percent(None)`, espera de 0.3s y segunda lectura real; tope en `100 * cores`; orden descendente por `(cpu_percent, memory_mb)`; límite de 10 procesos. (Tests: 5/5 pasando).
+  - [ ] T2.2: Telemetría robusta en WebSocket (`try/except` por muestra, logging de excepción, envío de frame `{"error": ...}`, reintento sin cerrar el socket) y filtro de errores en `TelemetryPanel.jsx`.
+  - [ ] T2.3: Control de reinicios en `run_backend.bat` (`--reload` solo en dev con `--reload-dir backend --reload-include "*.py"`, sin reload en prod).
 - [ ] **Fase 3: Frontend** (Pendiente)
 - [ ] **Fase 4: Túnel y Lanzadores** (Pendiente)
 - [ ] **Fase 5: Seguridad** (Pendiente)
