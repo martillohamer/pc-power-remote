@@ -4,6 +4,9 @@
 - **Fase**: FASE 2: BACKEND FORENSE Y TELEMETRÍA (Completada). Sistema detenido tras completar Fase 2 según la orden del usuario.
 - **Rama**: `fix/t800-estabilizacion`
 - **Último comando probado**: `backend\.venv\Scripts\pytest backend\tests -v` (19 tests pasados, 0 fallos).
+- **Últimos commits (esta sesión)**:
+  - `7ccb3f6` feat(launcher): corrige `--reload-dir` en `run_backend.bat` y añade test (T2.3). El script ya está dentro de `backend/` (`cd /d "%~dp0"`), por lo que `--reload-dir backend` apuntaba a un directorio inexistente; se cambia por `--reload-dir .` (UTF-8 sin BOM, CRLF). Test actualizado para verificar `--reload-dir .` y rechazar la ruta obsoleta.
+  - `16c4a9b` chore(repo): añade `.gitattributes` con `*.bat text eol=crlf` y aplica `git add --renormalize .` para normalizar finales de línea CRLF en los scripts de Windows.
 
 ---
 
@@ -71,7 +74,8 @@ WebSocket crashed with exception: <class 'starlette.websockets.WebSocketDisconne
 - [x] **Fase 2: Backend Forense y Telemetría**
   - [x] T2.1: `forensic_processes()`: primado con `proc.cpu_percent(None)`, espera de 0.3s y segunda lectura real; tope en `100 * cores`; orden descendente por `(cpu_percent, memory_mb)`; límite de 10 procesos. (Tests: 5/5 pasando).
   - [x] T2.2: Telemetría robusta en WebSocket (`try/except` por muestra, logging con `logger.exception`, frame `{"error": ...}`, reintento continuo sin cerrar canal) y filtro en `TelemetryPanel.jsx` (ignora frames con clave "error"). (Tests: 3/3 pasando).
-  - [x] T2.3: Control de reinicios en `run_backend.bat` (`--reload` solo en dev con `--reload-dir backend --reload-include "*.py"`, sin reload en prod). (Tests: 1/1 pasando).
+  - [x] T2.3: Control de reinicios en `run_backend.bat` (`--reload` solo en dev con `--reload-dir . --reload-include "*.py"`, sin reload en prod). El script hace `cd /d "%~dp0"` (queda dentro de `backend/`), por lo que `--reload-dir .` es el directorio correcto. Test en `backend/tests/test_launcher.py` que lo verifica y rechaza `--reload-dir backend`. Commit `7ccb3f6`.
+- [x] Higiene de reposo: `.gitattributes` con `*.bat text eol=crlf` + `git add --renormalize .` (UTF-8 sin BOM, CRLF). Commit `16c4a9b`.
 - [ ] **Fase 3: Frontend** (Pendiente)
 - [ ] **Fase 4: Túnel y Lanzadores** (Pendiente)
 - [ ] **Fase 5: Seguridad** (Pendiente)
