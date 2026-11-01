@@ -1,9 +1,9 @@
 # ESTADO_T800.md — Registro de Auditoría y Estado del Sistema
 
 ## 1. Fase Actual
-- **Fase**: FASE 1: BACKEND DE APAGADO (Completada). Sistema detenido tras completar Fase 0 y Fase 1 según la orden del usuario.
+- **Fase**: FASE 2: BACKEND FORENSE Y TELEMETRÍA (Completada). Sistema detenido tras completar Fase 2 según la orden del usuario.
 - **Rama**: `fix/t800-estabilizacion`
-- **Último comando probado**: `backend\.venv\Scripts\pytest backend\tests -v` (18 tests pasados, 0 fallos).
+- **Último comando probado**: `backend\.venv\Scripts\pytest backend\tests -v` (19 tests pasados, 0 fallos).
 
 ---
 
@@ -68,10 +68,10 @@ WebSocket crashed with exception: <class 'starlette.websockets.WebSocketDisconne
   - [x] T1.2: `/api/cancel`: registro en log de returncode, stdout y stderr; 1116 mapeado a respuesta clara ("No había apagado pendiente para cancelar.") con estado local limpio. Documentada limitación de `/t 0`.
   - [x] Tests Fase 1 (TDD verde): 10 tests unitarios en `backend/tests/test_shutdown.py` pasando al 100%.
 
-- [ ] **Fase 2: Backend Forense y Telemetría**
+- [x] **Fase 2: Backend Forense y Telemetría**
   - [x] T2.1: `forensic_processes()`: primado con `proc.cpu_percent(None)`, espera de 0.3s y segunda lectura real; tope en `100 * cores`; orden descendente por `(cpu_percent, memory_mb)`; límite de 10 procesos. (Tests: 5/5 pasando).
   - [x] T2.2: Telemetría robusta en WebSocket (`try/except` por muestra, logging con `logger.exception`, frame `{"error": ...}`, reintento continuo sin cerrar canal) y filtro en `TelemetryPanel.jsx` (ignora frames con clave "error"). (Tests: 3/3 pasando).
-  - [ ] T2.3: Control de reinicios en `run_backend.bat` (`--reload` solo en dev con `--reload-dir backend --reload-include "*.py"`, sin reload en prod).
+  - [x] T2.3: Control de reinicios en `run_backend.bat` (`--reload` solo en dev con `--reload-dir backend --reload-include "*.py"`, sin reload en prod). (Tests: 1/1 pasando).
 - [ ] **Fase 3: Frontend** (Pendiente)
 - [ ] **Fase 4: Túnel y Lanzadores** (Pendiente)
 - [ ] **Fase 5: Seguridad** (Pendiente)
@@ -85,3 +85,6 @@ WebSocket crashed with exception: <class 'starlette.websockets.WebSocketDisconne
 - **Robustez de Entrada**: `schedule_shutdown` tolera peticiones sin cuerpo, con cuerpo vacío `{}` o con `{"minutes": 0}`, estandarizando la activación de Terminator sin riesgo de HTTP 422.
 - **Prevención de Error 1190 de Windows**: Al programar un apagado con temporizador (`minutes > 0`), se ejecuta un `shutdown /a` previo ignorando el código 1116 (409) para limpiar cualquier temporizador preexistente antes de armar el nuevo.
 - **Trazabilidad de Subprocesos**: `_run_shutdown` ahora imprime en el logger el comando exacto, su returncode, stdout y stderr para facilitar el diagnóstico forense.
+- **Medición Precisa de CPU**: psutil requiere una lectura previa (primado) con `proc.cpu_percent(None)` y un intervalo de espera (~0.3s) para calcular el porcentaje delta real entre ticks de reloj. Se ordena por tupla `(cpu_percent, memory_mb)` descendente.
+- **Resiliencia en WebSocket de Telemetría**: El hilo de telemetría captura excepciones por muestra emitiendo un frame `{"error": ...}` y reintentando en el ciclo siguiente en lugar de abortar la conexión; el frontend descarta silenciosamente estos frames de error manteniendo el último estado visual sin entrar en bucle de reconexión.
+- **Aislamiento de Recargas uvicorn**: En modo dev se delimitan las recargas exclusivamente al directorio `backend` y archivos `*.py` para evitar que escrituras en logs, `.env` o artefactos reinicien innecesariamente el proceso FastAPI. En modo prod se desactiva `--reload`.

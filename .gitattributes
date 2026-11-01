@@ -1,0 +1,2 @@
+# Estandarizar fin de línea en scripts de Windows (CRLF)
+*.bat text eol=crlf

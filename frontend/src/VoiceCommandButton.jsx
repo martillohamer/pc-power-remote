@@ -5,6 +5,7 @@ const RECOGNITION_LANG = 'es-ES'
 
 const VOICE_COMMANDS = {
   apagar: 'shutdown',
+  terminator: 'terminator',
   estado: 'state',
   suspender: 'suspend',
   reiniciar: 'restart',

@@ -410,6 +410,8 @@ export default function App() {
     setTimeout(() => {
       if (normalized === 'apagar') {
         scheduleShutdown(5)
+      } else if (normalized === 'terminator') {
+        scheduleShutdown(0)
       } else if (normalized === 'estado') {
         fetch('/api/state', { headers: { 'X-App-Pin': pin } })
           .then((r) => r.json())
@@ -422,8 +424,7 @@ export default function App() {
           .then((r) => r.json())
           .then((data) => setToast({ tone: 'success', title: 'Suspensión', message: data.message }))
       } else if (normalized === 'reiniciar') {
-        // No hay endpoint de reinicio aún, mostramos feedback
-        setToast({ tone: 'info', title: 'Reinicio', message: 'Endopint de reinicio no disponible aún' })
+        setToast({ tone: 'info', title: 'Reinicio', message: 'Endpoint de reinicio no disponible aún' })
       } else if (normalized === 'despertar') {
         fetch('/api/wake', {
           method: 'POST',
@@ -438,14 +439,7 @@ export default function App() {
             })
           )
       } else if (normalized === 'cancelar') {
-        fetch('/api/cancel', {
-          method: 'POST',
-          headers: { 'X-App-Pin': pin },
-        })
-          .then(() => setToast({ tone: 'success', title: 'Cancelado', message: 'Apagado cancelado' }))
-          .then(() => fetch('/api/state', { headers: { 'X-App-Pin': pin } }))
-          .then((r) => r.json())
-          .then((data) => setPending(data.pending ? data : null))
+        cancelShutdown()
       } else {
         setToast({ tone: 'error', title: 'Comando no reconocido', message: `No reconozco el comando: "${normalized}"` })
       }
@@ -495,27 +489,36 @@ export default function App() {
 
   const scheduleShutdown = async (minutes) => {
     setConfirmMinutes(null)
-    setBusy('shutdown')
+    setBusy(minutes === 0 ? 'terminator' : 'shutdown')
     try {
       const data = await api('/api/shutdown', {
         pin,
         method: 'POST',
         body: { minutes },
       })
-      setPending({
-        pending: true,
-        minutes: data.minutes,
-        ends_at: data.ends_at,
-        seconds_left: data.seconds,
-      })
-      setNow(Date.now())
-      setToast({
-        tone: 'success',
-        title: 'Apagado armado',
-        message: `El equipo se apagara en ${data.minutes} minutos.`,
-      })
+      if (minutes === 0) {
+        setPending(null)
+        setToast({
+          tone: 'error',
+          title: 'Terminator Ejecutado',
+          message: 'Apagado inmediato en curso. Hasta la vista, baby.',
+        })
+      } else {
+        setPending({
+          pending: true,
+          minutes: data.minutes,
+          ends_at: data.ends_at,
+          seconds_left: data.seconds,
+        })
+        setNow(Date.now())
+        setToast({
+          tone: 'success',
+          title: 'Apagado armado',
+          message: `El equipo se apagara en ${data.minutes} minutos.`,
+        })
+      }
     } catch (err) {
-      handleError(err, 'No se pudo armar el apagado')
+      handleError(err, minutes === 0 ? 'Error en Apagado Terminator' : 'No se pudo armar el apagado')
     } finally {
       setBusy(null)
     }
@@ -524,12 +527,12 @@ export default function App() {
   const cancelShutdown = async () => {
     setBusy('cancel')
     try {
-      await api('/api/cancel', { pin, method: 'POST' })
+      const data = await api('/api/cancel', { pin, method: 'POST' })
       setPending(null)
       setToast({
         tone: 'success',
         title: 'Apagado cancelado',
-        message: 'El temporizador fue abortado. El equipo sigue encendido.',
+        message: data?.message || 'El temporizador fue abortado. El equipo sigue encendido.',
       })
     } catch (err) {
       if (err.status === 409) {
@@ -806,7 +809,7 @@ export default function App() {
           <button
             type="button"
             onClick={() => {
-              const confirmed = window.confirm('¿APAGADO INMEDIATO NIVEL TERMINATOR?\nEl equipo se apagara al instante.\n¿Continuar?');
+              const confirmed = window.confirm('¿APAGADO INMEDIATO NIVEL TERMINATOR?\nEl equipo se apagará al instante forzando el cierre de aplicaciones.\n¿Continuar?');
               if (confirmed) {
                 scheduleShutdown(0);
               }
@@ -815,10 +818,9 @@ export default function App() {
             disabled={locked}
             aria-label="Apagado inmediato nivel Terminator"
           >
-            <span className="relative">APAGADO AUTOMÁTICO NIVEL TERMINATOR</span>
-            <svg class="absolute -inset-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M18 6L6 18M6 6l12 12"/>
-            </svg>
+            <span className="relative">
+              {busy === 'terminator' ? 'EJECUTANDO TERMINATOR…' : '💀 APAGADO INMEDIATO (TERMINATOR)'}
+            </span>
           </button>
         </div>
 
