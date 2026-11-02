@@ -3,6 +3,9 @@ import { useEffect, useState } from 'react'
 import TelemetryPanel from './TelemetryPanel'
 import VoiceCommandButton from './VoiceCommandButton'
 import ForensicPanel from './ForensicPanel'
+import { LiveLogsTerminal } from './LiveLogsTerminal'
+import { AutomationPanel } from './AutomationPanel'
+import { QuickActionsWidget } from './QuickActionsWidget'
 
 const STORAGE_KEY = 'pc-power-remote.pin'
 const DEFAULT_PIN = '134113'
@@ -741,6 +744,12 @@ export default function App() {
         <VoiceCommandButton onCommand={executeVoiceCommand} />
 
         <ForensicPanel />
+
+        {/* --- NUEVAS SECCIONES T-800 AÑADIDAS --- */}
+        <LiveLogsTerminal />
+        <QuickActionsWidget />
+        <AutomationPanel />
+        {/* --------------------------------------- */}
 
         <section className="relative border border-edge bg-panel/80 p-5">
           {pending ? (
