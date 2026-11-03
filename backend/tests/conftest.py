@@ -37,3 +37,4 @@ def protect_system(monkeypatch):
     """Garantiza que nunca se ejecuten comandos reales y limpia estado entre tests."""
     monkeypatch.setattr(main, "DRY_RUN", True)
     main._set_pending(None)
+    main.FAILED_PIN_ATTEMPTS.clear()

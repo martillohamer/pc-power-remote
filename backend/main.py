@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Annotated
 
 import psutil
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 from starlette.websockets import WebSocketDisconnect
@@ -329,32 +329,103 @@ app.add_middleware(
 )
 
 
-# --- Autenticacion por PIN ---------------------------------------------------
+# --- Autenticacion por PIN y Rate Limiting ----------------------------------
 
-def require_pin(
+FAILED_PIN_ATTEMPTS: dict[str, list[float]] = {}
+RATE_LIMIT_WINDOW_SECONDS = 60
+MAX_FAILED_PIN_ATTEMPTS = 5
+
+
+def verify_pin_with_rate_limit(
+    request: Request,
     x_app_pin: Annotated[str | None, Header(alias=PIN_HEADER)] = None,
 ) -> None:
-    """Dependency: valida la cabecera X-App-Pin contra APP_PIN.
+    """Dependency: valida la cabecera X-App-Pin contra APP_PIN con rate-limiting por IP.
 
-    Se usa comparacion en tiempo constante para no filtrar informacion del PIN
-    mediante diferencias de tiempo de respuesta.
+    Limita a un máximo de 5 intentos fallidos en una ventana de 60 segundos por IP.
+    Tras 5 intentos fallidos consecutivos, responde con HTTP 429 (Too Many Requests).
+    Un intento exitoso resetea el contador de fallos para la IP cliente.
     """
+    client_ip = (
+        request.headers.get("CF-Connecting-IP")
+        or request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        or (request.client.host if request.client else "127.0.0.1")
+    )
+    if not client_ip:
+        client_ip = "127.0.0.1"
+
+    now = time.time()
+
+    # Limpiar intentos fuera de la ventana de 60s
+    attempts = [
+        t for t in FAILED_PIN_ATTEMPTS.get(client_ip, [])
+        if now - t < RATE_LIMIT_WINDOW_SECONDS
+    ]
+    FAILED_PIN_ATTEMPTS[client_ip] = attempts
+
+    if len(attempts) >= MAX_FAILED_PIN_ATTEMPTS:
+        raise HTTPException(
+            status_code=429,
+            detail="Demasiados intentos fallidos de PIN. Inténtalo de nuevo más tarde.",
+            headers={"Retry-After": str(RATE_LIMIT_WINDOW_SECONDS)},
+        )
+
     if not x_app_pin or not hmac.compare_digest(
         x_app_pin.encode("utf-8"), APP_PIN.encode("utf-8")
     ):
+        attempts.append(now)
+        FAILED_PIN_ATTEMPTS[client_ip] = attempts
         raise HTTPException(
             status_code=401,
             detail="PIN invalido o ausente.",
             headers={"WWW-Authenticate": PIN_HEADER},
         )
 
+    # PIN valido: resetear contador para esta IP
+    FAILED_PIN_ATTEMPTS.pop(client_ip, None)
+
+
+def require_pin(
+    request: Request,
+    x_app_pin: Annotated[str | None, Header(alias=PIN_HEADER)] = None,
+) -> None:
+    """Dependency: alias para verify_pin_with_rate_limit."""
+    verify_pin_with_rate_limit(request, x_app_pin)
+
 
 def _ws_pin_ok(websocket: WebSocket, pin: str | None) -> bool:
-    """Valida el PIN de un WebSocket: query param ?pin= o cabecera X-App-Pin."""
+    """Valida el PIN de un WebSocket con rate-limiting por IP."""
+    client_ip = (
+        websocket.headers.get("CF-Connecting-IP")
+        or websocket.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        or (websocket.client.host if websocket.client else "127.0.0.1")
+    )
+    if not client_ip:
+        client_ip = "127.0.0.1"
+
+    now = time.time()
+    attempts = [
+        t for t in FAILED_PIN_ATTEMPTS.get(client_ip, [])
+        if now - t < RATE_LIMIT_WINDOW_SECONDS
+    ]
+    FAILED_PIN_ATTEMPTS[client_ip] = attempts
+
+    if len(attempts) >= MAX_FAILED_PIN_ATTEMPTS:
+        logger.warning("WebSocket: rate limit excedido para IP %s", client_ip)
+        return False
+
     candidate = (pin or websocket.headers.get(PIN_HEADER) or "").strip()
-    return bool(candidate) and hmac.compare_digest(
+    is_ok = bool(candidate) and hmac.compare_digest(
         candidate.encode("utf-8"), APP_PIN.encode("utf-8")
     )
+
+    if not is_ok:
+        attempts.append(now)
+        FAILED_PIN_ATTEMPTS[client_ip] = attempts
+        return False
+
+    FAILED_PIN_ATTEMPTS.pop(client_ip, None)
+    return True
 
 
 # --- Modelos -----------------------------------------------------------------
