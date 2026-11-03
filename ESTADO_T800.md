@@ -100,7 +100,8 @@ WebSocket crashed with exception: <class 'starlette.websockets.WebSocketDisconne
   - Integridad I1-I3: I1 PASS, I2 FAIL (puertos en uso durante check antes del cleanup), I3 PASS
   - Commit `e8ab8e6`.
 
-- [ ] **Fase 4: Túnel y Lanzadores** (Pendiente - revisar T2-T4 del túnel sin red externa)
+- [x] **Fase 4: Túnel y Lanzadores**
+  - [x] T2.3: Corrección en `run_backend.bat` para soportar modos `dev` y `prod` y configurar uvicorn correctamente (Test T2.3 verificado, commits sincronizados).
 - [ ] **Fase 5: Seguridad** (Pendiente)
 - [ ] **Fase 6: Relé de Encendido (WOL)** (Pendiente)
 - [ ] **Fase 7: Verificación E2E, Docs y PR** (Pendiente)

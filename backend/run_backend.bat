@@ -29,7 +29,15 @@ if errorlevel 1 (
 )
 
 echo.
-echo [3/3] Iniciando servidor en http://0.0.0.0:8000
-"%PY%" -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+set "MODE=%1"
+if "%MODE%"=="" set "MODE=dev"
+
+if /i "%MODE%"=="prod" (
+    echo [3/3] Iniciando servidor en produccion (sin reload) en http://0.0.0.0:8000
+    "%PY%" -m uvicorn main:app --host 0.0.0.0 --port 8000
+) else (
+    echo [3/3] Iniciando servidor en desarrollo (con reload) en http://0.0.0.0:8000
+    "%PY%" -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload --reload-dir . --reload-include "*.py"
+)
 endlocal
 pause
