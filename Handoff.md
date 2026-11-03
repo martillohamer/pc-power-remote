@@ -1,7 +1,7 @@
 # Handoff: pc-power-remote (Sistema T-800)
 
 **Estado: EN ESTABILIZACIÓN. No está listo para producción.**
-**Última actualización: 2026-11-01** · Versión de la app: 0.6.0 · Rama de trabajo: `fix/t800-estabilizacion`
+**Última actualización: 2026-11-03** · Versión de la app: 0.6.0 · Rama de trabajo: `feature/t800-v2`
 
 Este documento sustituye al Handoff anterior, que declaraba "PRODUCTION READY / COMPLETED" y contenía datos incorrectos (ver sección 9). Está escrito para que una persona o un agente de IA pueda retomar el proyecto exactamente donde se dejó.
 

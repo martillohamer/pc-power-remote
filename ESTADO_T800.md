@@ -105,7 +105,10 @@ WebSocket crashed with exception: <class 'starlette.websockets.WebSocketDisconne
 - [x] **Fase 5: Seguridad**
   - [x] T5.1: Retirada de secretos y PIN por defecto (en proceso/revisión).
   - [x] T5.2: Límite de intentos: 5 PIN fallidos por IP -> 429 con `Retry-After` (REST y WebSocket). Implementado en `main.py` y verificado con `test_ratelimit.py`.
-- [ ] **Fase 6: Relé de Encendido (WOL)** (Pendiente)
+- [x] **Fase 6: Relé de Encendido (WOL)**
+  - [x] T6.1: Implementación del módulo de Wake-on-LAN en `backend/main.py` (`/api/wake`, `/api/config`).
+  - [x] T6.2: Suite de pruebas unitarias (`backend/tests/test_wol.py`) cubriendo autenticación, éxito de envío, validación de MAC y errores de red.
+  - [x] Resultado: 38/38 tests pasando (Suite completa al 100% en verde).
 - [ ] **Fase 7: Verificación E2E, Docs y PR** (Pendiente)
 
 ## 6. Resultado de la Verificacion Automatica (FASE 3B)
