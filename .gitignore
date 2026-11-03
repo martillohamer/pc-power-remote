@@ -18,3 +18,6 @@ dist/
 # Tests / tunnel
 .pytest_cache/
 .cloudflared/
+
+cloudflared.exe
+.cloudflared/
