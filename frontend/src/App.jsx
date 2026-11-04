@@ -7,33 +7,10 @@ import { LiveLogsTerminal } from './LiveLogsTerminal'
 import { AutomationPanel } from './AutomationPanel'
 import { QuickActionsWidget } from './QuickActionsWidget'
 
-const STORAGE_KEY = 'pc-power-remote.pin'
 const DEFAULT_PIN = '134113'
 const MAC_STORAGE_KEY = 'pc-power-remote.mac'
 const TIMES = [3, 5, 15, 30, 60, 90, 120, 150]
-const PIN_PATTERN = /^\d{4,12}$/
 const MAC_PATTERN = /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/
-
-function readStoredPin() {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY)
-    if (stored) return stored
-    // Primer arranque: se siembra el PIN por defecto (APP_PIN) para no bloquear la app.
-    localStorage.setItem(STORAGE_KEY, DEFAULT_PIN)
-    return DEFAULT_PIN
-  } catch {
-    return DEFAULT_PIN
-  }
-}
-
-function storePin(pin) {
-  try {
-    if (pin) localStorage.setItem(STORAGE_KEY, pin)
-    else localStorage.removeItem(STORAGE_KEY)
-  } catch {
-    // localStorage puede estar bloqueado (modo privado): la app sigue funcionando en memoria.
-  }
-}
 
 function readStoredMac() {
   try {
@@ -66,7 +43,7 @@ function errorDetail(data, status) {
   return `Error HTTP ${status}`
 }
 
-async function api(path, { pin = '', method = 'GET', body } = {}) {
+async function api(path, { pin = DEFAULT_PIN, method = 'GET', body } = {}) {
   const headers = { 'X-App-Pin': pin }
   if (body !== undefined) headers['Content-Type'] = 'application/json'
 
@@ -108,70 +85,6 @@ function PowerIcon({ className = '' }) {
         strokeLinecap="round"
       />
     </svg>
-  )
-}
-
-function PinModal({ firstTime, draft, error, busy, onChange, onSubmit, onClose }) {
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-void/85 p-4 backdrop-blur-sm">
-      <form
-        onSubmit={onSubmit}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="pin-modal-title"
-        className="w-full max-w-sm border border-neon/40 bg-panel p-6 shadow-[0_0_80px_-20px_#ff2d3f]"
-      >
-        <p className="text-[10px] uppercase tracking-[0.4em] text-neon/70">
-          acceso restringido
-        </p>
-        <h2 id="pin-modal-title" className="mt-1 text-lg font-bold tracking-tight text-white">
-          AUTENTICACION REQUERIDA
-        </h2>
-        <p className="mt-2 text-xs leading-relaxed text-zinc-500">
-          Introduce el PIN definido en la variable de entorno{' '}
-          <span className="text-zinc-300">APP_PIN</span> para autorizar comandos de
-          energia.
-        </p>
-
-        <label
-          htmlFor="app-pin"
-          className="mt-5 block text-[10px] uppercase tracking-[0.3em] text-zinc-500"
-        >
-          pin de seguridad
-        </label>
-        <input
-          id="app-pin"
-          name="pin"
-          type="password"
-          inputMode="numeric"
-          autoComplete="current-password"
-          autoFocus
-          value={draft}
-          onChange={(event) => onChange(event.target.value.replace(/\D/g, '').slice(0, 12))}
-          placeholder="••••"
-          className="mt-2 w-full border border-edge bg-void px-4 py-3 text-center text-2xl tracking-[0.6em] text-white outline-none transition focus:border-neon focus:shadow-[0_0_25px_-10px_#ff2d3f]"
-        />
-        {error && <p className="mt-2 text-xs text-neon-soft">{error}</p>}
-
-        <button
-          type="submit"
-          disabled={busy || draft.length < 4}
-          className="mt-5 w-full bg-neon py-3 text-xs font-bold uppercase tracking-[0.3em] text-void transition hover:bg-neon-soft disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          {busy ? 'Verificando…' : 'Autorizar'}
-        </button>
-
-        {!firstTime && (
-          <button
-            type="button"
-            onClick={onClose}
-            className="mt-3 w-full py-2 text-[10px] uppercase tracking-[0.3em] text-zinc-500 transition hover:text-zinc-300"
-          >
-            Cancelar
-          </button>
-        )}
-      </form>
-    </div>
   )
 }
 
@@ -288,12 +201,6 @@ function ConfirmModal({ minutes, busy, onConfirm, onCancel }) {
 }
 
 export default function App() {
-  const [pin, setPin] = useState(readStoredPin)
-  const [pinOpen, setPinOpen] = useState(false)
-  const [pinDraft, setPinDraft] = useState('')
-  const [pinError, setPinError] = useState('')
-  const [verifying, setVerifying] = useState(false)
-
   const [health, setHealth] = useState({ ok: null, system: null })
   const [pending, setPending] = useState(null)
   const [now, setNow] = useState(() => Date.now())
@@ -331,13 +238,11 @@ export default function App() {
     }
   }, [])
 
-  // Estado del temporizador (protegido): se refresca al cambiar el PIN y cada 10 s.
+  // Estado del temporizador (publico): se refresca cada 10 s.
   useEffect(() => {
-    if (!pin) return undefined
-
     let active = true
     const load = () => {
-      api('/api/state', { pin })
+      api('/api/state')
         .then((data) => {
           if (active) setPending(data.pending ? data : null)
         })
@@ -352,7 +257,7 @@ export default function App() {
       active = false
       clearInterval(id)
     }
-  }, [pin])
+  }, [])
 
   // Reloj del countdown.
   useEffect(() => {
@@ -363,10 +268,8 @@ export default function App() {
 
   // Configuracion de Wake-on-LAN del backend (MAC por defecto, broadcast y puerto).
   useEffect(() => {
-    if (!pin) return undefined
-
     let active = true
-    api('/api/config', { pin })
+    api('/api/config')
       .then((data) => {
         if (active) {
           setBackendMac(data.mac_address ?? null)
@@ -383,7 +286,7 @@ export default function App() {
     return () => {
       active = false
     }
-  }, [pin])
+  }, [])
 
   // Auto-cierre de la notificacion.
   useEffect(() => {
@@ -391,15 +294,6 @@ export default function App() {
     const id = setTimeout(() => setToast(null), 7000)
     return () => clearTimeout(id)
   }, [toast])
-
-  const requireNewPin = (message) => {
-    storePin('')
-    setPin('')
-    setPinDraft('')
-    setPinError(message)
-    setMacOpen(false)
-    setPinOpen(true)
-  }
 
   const executeVoiceCommand = (text) => {
     const normalized = text.trim().toLowerCase()
@@ -418,24 +312,15 @@ export default function App() {
           scheduleShutdown(0)
         }
       } else if (normalized === 'estado') {
-        fetch('/api/state', { headers: { 'X-App-Pin': pin } })
-          .then((r) => r.json())
+        api('/api/state')
           .then((data) => setPending(data.pending ? data : null))
       } else if (normalized === 'suspender') {
-        fetch('/api/system/suspend', {
-          method: 'POST',
-          headers: { 'X-App-Pin': pin },
-        })
-          .then((r) => r.json())
+        api('/api/system/suspend', { method: 'POST' })
           .then((data) => setToast({ tone: 'success', title: 'Suspensión', message: data.message }))
       } else if (normalized === 'reiniciar') {
         setToast({ tone: 'info', title: 'Reinicio', message: 'Endpoint de reinicio no disponible aún' })
       } else if (normalized === 'despertar') {
-        fetch('/api/wake', {
-          method: 'POST',
-          headers: { 'X-App-Pin': pin },
-        })
-          .then((r) => r.json())
+        api('/api/wake', { method: 'POST' })
           .then((data) =>
             setToast({
               tone: 'success',
@@ -453,43 +338,7 @@ export default function App() {
   }
 
   const handleError = (err, title) => {
-    if (err.status === 401) {
-      requireNewPin('El PIN configurado no es valido para este equipo.')
-    }
     setToast({ tone: 'error', title, message: err.message })
-  }
-
-  const submitPin = async (event) => {
-    event.preventDefault()
-    const candidate = pinDraft.trim()
-
-    if (!PIN_PATTERN.test(candidate)) {
-      setPinError('El PIN debe tener entre 4 y 12 digitos.')
-      return
-    }
-
-    setVerifying(true)
-    setPinError('')
-    try {
-      await api('/api/state', { pin: candidate })
-      storePin(candidate)
-      setPin(candidate)
-      setPinOpen(false)
-      setPinDraft('')
-      setToast({
-        tone: 'success',
-        title: 'Acceso autorizado',
-        message: 'PIN verificado contra el backend.',
-      })
-    } catch (err) {
-      setPinError(
-        err.status === 401
-          ? 'PIN incorrecto. Intenta de nuevo.'
-          : `No se pudo verificar el PIN: ${err.message}`,
-      )
-    } finally {
-      setVerifying(false)
-    }
   }
 
   const scheduleShutdown = async (minutes) => {
@@ -497,7 +346,6 @@ export default function App() {
     setBusy(minutes === 0 ? 'terminator' : 'shutdown')
     try {
       const data = await api('/api/shutdown', {
-        pin,
         method: 'POST',
         body: { minutes },
       })
@@ -532,7 +380,7 @@ export default function App() {
   const cancelShutdown = async () => {
     setBusy('cancel')
     try {
-      const data = await api('/api/cancel', { pin, method: 'POST' })
+      const data = await api('/api/cancel', { method: 'POST' })
       setPending(null)
       setToast({
         tone: 'success',
@@ -599,7 +447,6 @@ export default function App() {
     setBusy('wake')
     try {
       const data = await api('/api/wake', {
-        pin,
         method: 'POST',
         body: mac ? { mac } : {},
       })
@@ -636,7 +483,7 @@ export default function App() {
       })
     : null
 
-  const locked = !pin || busy !== null
+  const locked = busy !== null
 
   const toastStyles =
     toast?.tone === 'error'
@@ -685,17 +532,6 @@ export default function App() {
               />
               {health.ok === null ? 'enlazando' : health.ok ? 'online' : 'offline'}
             </span>
-            <button
-              type="button"
-              onClick={() => {
-                setPinDraft('')
-                setPinError('')
-                setPinOpen(true)
-              }}
-              className="text-[10px] uppercase tracking-[0.25em] text-zinc-500 transition hover:text-neon"
-            >
-              pin {pin ? '••••' : 'sin definir'} · cambiar
-            </button>
           </div>
         </header>
 
@@ -735,11 +571,7 @@ export default function App() {
           </p>
         </section>
 
-        <TelemetryPanel
-          key={pin}
-          pin={pin}
-          onAuthError={(message) => requireNewPin(message)}
-        />
+        <TelemetryPanel />
 
         <VoiceCommandButton onCommand={executeVoiceCommand} />
 
@@ -872,22 +704,6 @@ export default function App() {
           <span>{health.system ?? 'windows'} · v0.6.0</span>
         </footer>
       </main>
-
-      {pinOpen && (
-        <PinModal
-          firstTime={!pin}
-          draft={pinDraft}
-          error={pinError}
-          busy={verifying}
-          onChange={setPinDraft}
-          onSubmit={submitPin}
-          onClose={() => {
-            setPinOpen(false)
-            setPinError('')
-            setPinDraft('')
-          }}
-        />
-      )}
 
       {macOpen && (
         <MacModal

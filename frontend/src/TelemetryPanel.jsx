@@ -21,9 +21,9 @@ const TONES = {
   },
 }
 
-function socketUrl(pin) {
+function socketUrl() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${protocol}//${window.location.host}/ws/telemetry?pin=${encodeURIComponent(pin)}`
+  return `${protocol}//${window.location.host}/ws/telemetry`
 }
 
 function toneFor(value) {
@@ -75,18 +75,12 @@ function Metric({ label, value, detail }) {
   )
 }
 
-export default function TelemetryPanel({ pin, onAuthError }) {
+export default function TelemetryPanel() {
   const [telemetry, setTelemetry] = useState(null)
-  const [status, setStatus] = useState(() => (pin ? 'connecting' : 'idle'))
-  const authErrorRef = useRef(onAuthError)
+  const [status, setStatus] = useState('connecting')
+  const authErrorRef = useRef(null)
 
   useEffect(() => {
-    authErrorRef.current = onAuthError
-  }, [onAuthError])
-
-  useEffect(() => {
-    if (!pin) return undefined
-
     let active = true
     let socket = null
     let retryId = null
@@ -95,7 +89,7 @@ export default function TelemetryPanel({ pin, onAuthError }) {
     const connect = () => {
       if (!active) return
 
-      socket = new WebSocket(socketUrl(pin))
+      socket = new WebSocket(socketUrl())
 
       socket.onopen = () => {
         if (!active) return
@@ -116,12 +110,6 @@ export default function TelemetryPanel({ pin, onAuthError }) {
 
       socket.onclose = (event) => {
         if (!active) return
-
-        if (event.code === 1008) {
-          setStatus('idle')
-          authErrorRef.current?.('PIN rechazado por el monitor de telemetria.')
-          return
-        }
 
         setStatus('reconnecting')
         retryId = setTimeout(connect, delay)
@@ -144,7 +132,7 @@ export default function TelemetryPanel({ pin, onAuthError }) {
         socket.close()
       }
     }
-  }, [pin])
+  }, [])
 
   const live = status === 'live'
   const label =
